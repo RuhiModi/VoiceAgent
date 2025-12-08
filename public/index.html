@@ -6,10 +6,6 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 
   <style>
-
-    <p id="userSpeech"></p>
-    <p id="aiReply"></p>
-
     body {
       font-family: Arial, sans-serif;
       background: #f4f6f8;
@@ -36,14 +32,7 @@
       font-size: 16px;
       border-radius: 8px;
       cursor: pointer;
-      margin-top: 20px;
-    }
-    button:hover {
-      background: #084ea3;
-    }
-    .status {
       margin-top: 15px;
-      font-weight: bold;
     }
     .box {
       margin-top: 20px;
@@ -65,72 +54,19 @@
     <h1>🎙️ Government Voice Assistant</h1>
 
     <button id="startBtn">Start Talking</button>
-    <div class="status" id="status">Idle</div>
 
     <div class="box">
       <label>User Said:</label>
-      <textarea id="userText" readonly></textarea>
+      <textarea id="userSpeech" readonly></textarea>
     </div>
 
     <div class="box">
       <label>Assistant Reply:</label>
-      <textarea id="assistantText" readonly></textarea>
+      <textarea id="aiReply" readonly></textarea>
     </div>
   </div>
 
-  <script>
-  const startBtn = document.getElementById("startBtn");
-  const stopBtn = document.getElementById("stopBtn");
-  const userSpeech = document.querySelector("#userSpeech");
-  const aiReply = document.querySelector("#aiReply");
-
-  const SpeechRecognition =
-    window.SpeechRecognition || window.webkitSpeechRecognition;
-
-  const recognition = new SpeechRecognition();
-  recognition.lang = "en-IN";
-  recognition.interimResults = false;
-  recognition.continuous = false;
-
-  startBtn.onclick = () => {
-    userSpeech.innerText = "";
-    aiReply.innerText = "Listening...";
-    recognition.start();
-  };
-
-  recognition.onresult = async (event) => {
-    const text = event.results[0][0].transcript;
-    userSpeech.innerText = text;
-    aiReply.innerText = "Thinking...";
-
-    try {
-      const res = await fetch("/api/talk", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text })
-      });
-
-      const data = await res.json();
-      aiReply.innerText = data.reply;
-
-      speak(data.reply);
-    } catch (err) {
-      aiReply.innerText = "Error contacting server";
-    }
-  };
-
-  function speak(text) {
-    const utterance = new SpeechSynthesisUtterance(text);
-    utterance.lang = detectLang(text);
-    speechSynthesis.cancel();
-    speechSynthesis.speak(utterance);
-  }
-
-  function detectLang(text) {
-    if (/[\u0900-\u097F]/.test(text)) return "hi-IN";
-    if (/[\u0A80-\u0AFF]/.test(text)) return "gu-IN";
-    return "en-IN";
-  }
-</script>
+  <!-- ✅ USE ONLY THIS -->
+  <script src="script.js"></script>
 </body>
 </html>
