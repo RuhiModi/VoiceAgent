@@ -13,9 +13,6 @@ async function sendTextToAI(text) {
     document.getElementById("userSpeech").innerText = transcript;
     sendTextToAI(transcript);
 
-
-    document.getElementById("aiReply").innerText = data.reply;
-
     // Speak reply
     const utterance = new SpeechSynthesisUtterance(data.reply);
 
