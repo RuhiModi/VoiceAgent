@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8" />
+  <title>Free Voice AI Agent</title>
+
+  <style>
+    body {
+      background: #0f172a;
+      color: white;
+      font-family: Arial, sans-serif;
+      text-align: center;
+      padding: 40px;
+    }
+
+    button {
+      padding: 14px 22px;
+      font-size: 18px;
+      margin: 10px;
+      border-radius: 8px;
+      border: none;
+      cursor: pointer;
+    }
+
+    #startBtn { background: #0A66C2; color: white; }
+    #stopBtn { background: #ef4444; color: white; }
+
+    .box {
+      background: #1e293b;
+      padding: 20px;
+      border-radius: 8px;
+      margin-top: 20px;
+      width: 80%;
+      margin-left: auto;
+      margin-right: auto;
+    }
+  </style>
+</head>
+
+<body>
+
+  <h1>🎤 Free Voice AI Agent</h1>
+  <p>Click start, speak, and hear AI reply back.</p>
+
+  <button id="startBtn">Start Talking</button>
+  <button id="stopBtn" disabled>Stop</button>
+
+  <div class="box">
+    <h3>Your Speech</h3>
+    <p id="speech">—</p>
+
+    <h3>AI Reply</h3>
+    <p id="response">—</p>
+  </div>
+
+  <script>
+    let recognition;
+    let isRecording = false;
+
+    // ------ SPEECH TO TEXT ------
+    if ("webkitSpeechRecognition" in window) {
+      recognition = new webkitSpeechRecognition();
+      recognition.lang = "en-IN";
+      recognition.continuous = false;
+      recognition.interimResults = false;
+
+      recognition.onresult = async function(event) {
+        const text = event.results[0][0].transcript;
+        document.getElementById("speech").innerText = text;
+
+        const res = await fetch("/api/voice", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ text })
+        });
+
+        const data = await res.json();
+        document.getElementById("response").innerText = data.reply;
+
+        // ---- TEXT TO SPEECH ----
+        const utter = new SpeechSynthesisUtterance(data.reply);
+        utter.lang = "en-IN";
+
+        let voices = speechSynthesis.getVoices();
+        utter.voice = voices.find(v => v.lang.includes("en-IN")) || voices[0];
+
+        speechSynthesis.speak(utter);
+      };
+
+      recognition.onerror = () => console.log("Speech recognition error");
+    } else {
+      alert("Your browser does not support Speech Recognition. Use Chrome or Edge.");
+    }
+
+    // ------ BUTTON CONTROLS ------
+    document.getElementById("startBtn").onclick = () => {
+      if (!isRecording) {
+        isRecording = true;
+        recognition.start();
+        document.getElementById("stopBtn").disabled = false;
+      }
+    };
+
+    document.getElementById("stopBtn").onclick = () => {
+      if (isRecording) {
+        isRecording = false;
+        recognition.stop();
+        document.getElementById("stopBtn").disabled = true;
+      }
+    };
+  </script>
+
+</body>
+</html>
