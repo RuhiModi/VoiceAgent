@@ -75,63 +75,58 @@
   </div>
 
   <script>
-    const SpeechRecognition =
-      window.SpeechRecognition || window.webkitSpeechRecognition;
+  const startBtn = document.getElementById("startBtn");
+  const stopBtn = document.getElementById("stopBtn");
+  const userSpeech = document.querySelector("#userSpeech");
+  const aiReply = document.querySelector("#aiReply");
 
-    const recognition = new SpeechRecognition();
-    recognition.lang = "hi-IN"; // Hindi default
-    recognition.interimResults = false;
-    recognition.continuous = false;
+  const SpeechRecognition =
+    window.SpeechRecognition || window.webkitSpeechRecognition;
 
-    const startBtn = document.getElementById("startBtn");
-    const statusEl = document.getElementById("status");
-    const userTextEl = document.getElementById("userText");
-    const assistantTextEl = document.getElementById("assistantText");
+  const recognition = new SpeechRecognition();
+  recognition.lang = "en-IN";
+  recognition.interimResults = false;
+  recognition.continuous = false;
 
-    startBtn.onclick = () => {
-      userTextEl.value = "";
-      assistantTextEl.value = "";
-      statusEl.innerText = "🎧 Listening...";
-      recognition.start();
-    };
+  startBtn.onclick = () => {
+    userSpeech.innerText = "";
+    aiReply.innerText = "Listening...";
+    recognition.start();
+  };
 
-    recognition.onresult = async (event) => {
-      const transcript = event.results[0][0].transcript;
-      userTextEl.value = transcript;
-      statusEl.innerText = "🤖 Thinking...";
+  recognition.onresult = async (event) => {
+    const text = event.results[0][0].transcript;
+    userSpeech.innerText = text;
+    aiReply.innerText = "Thinking...";
 
-      const response = await fetch("/api/talk", {
+    try {
+      const res = await fetch("/api/talk", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text: transcript }),
+        body: JSON.stringify({ text })
       });
 
-      const data = await response.json();
-      assistantTextEl.value = data.reply;
-      statusEl.innerText = "✅ Speaking...";
+      const data = await res.json();
+      aiReply.innerText = data.reply;
 
       speak(data.reply);
-    };
-
-    recognition.onerror = () => {
-      statusEl.innerText = "❌ Voice recognition failed";
-    };
-
-    function speak(text) {
-      const utterance = new SpeechSynthesisUtterance(text);
-      utterance.lang = detectLanguage(text);
-      utterance.rate = 0.9;
-      speechSynthesis.speak(utterance);
-      utterance.onend = () => {
-        statusEl.innerText = "Idle";
-      };
+    } catch (err) {
+      aiReply.innerText = "Error contacting server";
     }
+  };
 
-    function detectLanguage(text) {
-      if (/[\u0900-\u097F]/.test(text)) return "hi-IN"; // Hindi
-      if (/[\u0A80-\u0AFF]/.test(text)) return "gu-IN"; // Gujarati
-      return "en-IN";
-    }
-  </script>
+  function speak(text) {
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.lang = detectLang(text);
+    speechSynthesis.cancel();
+    speechSynthesis.speak(utterance);
+  }
+
+  function detectLang(text) {
+    if (/[\u0900-\u097F]/.test(text)) return "hi-IN";
+    if (/[\u0A80-\u0AFF]/.test(text)) return "gu-IN";
+    return "en-IN";
+  }
+</script>
 </body>
 </html>
