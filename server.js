@@ -4,13 +4,12 @@ import axios from "axios";
 import path from "path";
 import { fileURLToPath } from "url";
 import twilio from "twilio";
-import fetch from "node-fetch";
 
 dotenv.config();
 
-// --------------------
-// BASIC SETUP
-// --------------------
+/* =====================
+   BASIC SETUP
+===================== */
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
@@ -19,9 +18,9 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(express.static(path.join(__dirname, "public")));
 
-// --------------------
-// ENV VARIABLES
-// --------------------
+/* =====================
+   ENV VARIABLES
+===================== */
 const {
   GROQ_API_KEY,
   LOG_WEBHOOK_URL,
@@ -31,37 +30,35 @@ const {
   RENDER_EXTERNAL_URL
 } = process.env;
 
-// Basic safety check
-if (!GROQ_API_KEY) {
-  console.warn("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");
+if (!RENDER_EXTERNAL_URL) {
+  console.error("❌ RENDER_EXTERNAL_URL is missing");
 }
 
-if (!TWILIO_ACCOUNT_SID || !TWILIO_AUTH_TOKEN || !TWILIO_PHONE_NUMBER) {
-  console.warn("AC09e67d9fcfe079cbdc34a6ed9c74e06f, 3759d7518e36da920879d49c387a6d0c, +18444826702");
-}
-
-// Twilio client
+/* =====================
+   TWILIO CLIENT
+===================== */
 const twilioClient = twilio(
   TWILIO_ACCOUNT_SID,
   TWILIO_AUTH_TOKEN
 );
 
-// --------------------
-// HEALTH CHECK
-// --------------------
-app.get("/health", (req, res) => {
+/* =====================
+   HEALTH CHECK
+===================== */
+app.get("/health", (_, res) => {
   res.json({ status: "ok" });
 });
 
-// --------------------
-// GROQ CALL FUNCTION
-// --------------------
+/* =====================
+   GROQ FUNCTION
+===================== */
 async function askGroq(userText) {
   try {
     const response = await axios.post(
       "https://api.groq.com/openai/v1/chat/completions",
       {
         model: "llama-3.1-8b-instant",
+        temperature: 0.3,
         messages: [
           {
             role: "system",
@@ -70,15 +67,14 @@ You are an OFFICIAL Government Scheme Voice Assistant.
 
 Rules:
 - Reply ONLY in the same language as the user (English, Hindi, Gujarati)
-- Keep answers short (max 60 words)
-- Ask clarifying questions when needed
-- Never promise approval, money, or eligibility
-- Only explain government schemes
-          `
+- Max 60 words
+- Speak clearly for phone calls
+- Ask clarifying questions
+- Do NOT promise eligibility or money
+`
           },
           { role: "user", content: userText }
-        ],
-        temperature: 0.3
+        ]
       },
       {
         headers: {
@@ -89,29 +85,27 @@ Rules:
     );
 
     return response.data.choices[0].message.content;
-  } catch (err) {
-    console.error("Groq Error:", err?.response?.data || err.message);
+  } catch (e) {
+    console.error("Groq Error:", e.message);
     return "Sorry, I am unable to answer right now.";
   }
 }
 
-// --------------------
-// WEB VOICE API (Browser)
-// --------------------
+/* =====================
+   WEB VOICE (BROWSER)
+===================== */
 app.post("/api/talk", async (req, res) => {
   const userText = req.body.text;
-  if (!userText) {
-    return res.json({ reply: "Please say something." });
-  }
+  if (!userText) return res.json({ reply: "Please say something." });
 
   const replyText = await askGroq(userText);
 
-  // Google Sheet logging
   if (LOG_WEBHOOK_URL) {
     fetch(LOG_WEBHOOK_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
+        channel: "web",
         user: userText,
         reply: replyText,
         time: new Date().toISOString()
@@ -122,9 +116,9 @@ app.post("/api/talk", async (req, res) => {
   res.json({ reply: replyText });
 });
 
-// --------------------
-// TWILIO INCOMING CALL
-// --------------------
+/* =====================
+   TWILIO INCOMING CALL
+===================== */
 app.post("/twilio/voice", (req, res) => {
   const VoiceResponse = twilio.twiml.VoiceResponse;
   const twiml = new VoiceResponse();
@@ -133,58 +127,57 @@ app.post("/twilio/voice", (req, res) => {
     input: "speech",
     action: "/twilio/gather",
     method: "POST",
-    speechTimeout: "auto"
+    speechTimeout: "auto",
+    language: "hi-IN"
   });
 
   gather.say(
     { voice: "Polly.Aditi", language: "hi-IN" },
-    "Namaste. This is the government assistance helpline. How can I help you?"
+    "नमस्ते। यह सरकारी सहायता हेल्पलाइन है। कृपया बताइए मैं आपकी कैसे मदद कर सकता हूँ?"
   );
 
-  res.type("text/xml");
-  res.send(twiml.toString());
+  res.type("text/xml").send(twiml.toString());
 });
 
-// --------------------
-// TWILIO SPEECH RESPONSE
-// --------------------
+/* =====================
+   TWILIO SPEECH HANDLER
+===================== */
 app.post("/twilio/gather", async (req, res) => {
   const speech = req.body.SpeechResult || "";
-
   const replyText = await askGroq(speech);
 
-  // Log call
   if (LOG_WEBHOOK_URL) {
     fetch(LOG_WEBHOOK_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
+        channel: "call",
         user: speech,
         reply: replyText,
-        channel: "call",
         time: new Date().toISOString()
       })
     }).catch(() => {});
   }
 
   const twiml = new twilio.twiml.VoiceResponse();
-  twiml.say(
-    { voice: "Polly.Aditi", language: "hi-IN" },
-    replyText
-  );
+  twiml.say({ voice: "Polly.Aditi", language: "hi-IN" }, replyText);
   twiml.pause({ length: 1 });
-  twiml.redirect("/twilio/voice");
+  twiml.redirect(`${RENDER_EXTERNAL_URL}/twilio/voice`);
 
-  res.type("text/xml");
-  res.send(twiml.toString());
+  res.type("text/xml").send(twiml.toString());
 });
 
-// --------------------
-// OUTBOUND CALL API
-// --------------------
+/* =====================
+   START OUTBOUND CALL
+===================== */
 app.post("/start-call", async (req, res) => {
   const { to } = req.body;
-  if (!to) return res.status(400).json({ error: "Missing number" });
+
+  if (!to || !to.startsWith("+")) {
+    return res.status(400).json({
+      error: "Phone number must be in E.164 format (ex: +919XXXXXXXXX)"
+    });
+  }
 
   try {
     const call = await twilioClient.calls.create({
@@ -195,14 +188,14 @@ app.post("/start-call", async (req, res) => {
 
     res.json({ success: true, sid: call.sid });
   } catch (err) {
-    console.error(err);
+    console.error("Call error:", err.message);
     res.status(500).json({ error: err.message });
   }
 });
 
-// --------------------
-// START SERVER
-// --------------------
+/* =====================
+   START SERVER
+===================== */
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`✅ Server running on port ${PORT}`);
