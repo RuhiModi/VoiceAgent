@@ -10,6 +10,10 @@ async function sendTextToAI(text) {
 
     const data = await response.json();
 
+    document.getElementById("userSpeech").innerText = transcript;
+    sendTextToAI(transcript);
+
+
     document.getElementById("aiReply").innerText = data.reply;
 
     // Speak reply
