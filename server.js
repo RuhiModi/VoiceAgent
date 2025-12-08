@@ -1,107 +1,130 @@
 import express from "express";
 import dotenv from "dotenv";
 import axios from "axios";
-import path from "path";
-import { fileURLToPath } from "url";
+import twilio from "twilio";
 
 dotenv.config();
 
-// ------------------
-// Basic setup
-// ------------------
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
 const app = express();
 app.use(express.json());
-app.use(express.static(path.join(__dirname, "public")));
+app.use(express.urlencoded({ extended: true }));
 
-// ------------------
-// Environment vars
-// ------------------
-const GROQ_API_KEY = process.env.GROQ_API_KEY;
-const LOG_WEBHOOK_URL = process.env.LOG_WEBHOOK_URL;
+const {
+  TWILIO_ACCOUNT_SID,
+  TWILIO_AUTH_TOKEN,
+  TWILIO_PHONE_NUMBER,
+  GROQ_API_KEY,
+  RENDER_EXTERNAL_URL,
+} = process.env;
 
-// ------------------
-// Health check
-// ------------------
-app.get("/health", (_, res) => {
-  res.json({ status: "ok" });
-});
+const client = twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN);
 
-// ------------------
-// Talk API
-// ------------------
-app.post("/api/talk", async (req, res) => {
-  const userText = req.body.text;
+/* -------------------------------
+   AI REPLY (LANG DETECTION)
+-------------------------------- */
+async function askAI(userText) {
+  const systemPrompt = `
+You are a Government Scheme Helpdesk AI.
+Reply ONLY in JSON:
+{
+  "lang": "en" | "hi" | "gu",
+  "reply": "short response"
+}
+Detect language automatically.
+Reply politely.
+`;
 
-  if (!userText) {
-    return res.json({ reply: "Please say or type something." });
-  }
-
-  try {
-    const response = await axios.post(
-      "https://api.groq.com/openai/v1/chat/completions",
-      {
-        model: "llama-3.1-8b-instant",
-        messages: [
-          {
-            role: "system",
-            content: `
-You are an official Government of India Scheme Information Assistant.
-
-You may ONLY provide information about these schemes:
-- PM Awas Yojana
-- Ayushman Bharat
-- PM Kisan
-- Pension / NPS
-- Government Scholarships
-
-Rules:
-- Reply in English, Hindi, or Gujarati (same as user)
-- Be factual, polite, short
-- Ask clarification questions
-`
-          },
-          { role: "user", content: userText }
-        ],
+  const res = await axios.post(
+    "https://api.groq.com/openai/v1/chat/completions",
+    {
+      model: "llama-3.1-8b-instant",
+      messages: [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: userText },
+      ],
+    },
+    {
+      headers: {
+        Authorization: `Bearer ${GROQ_API_KEY}`,
+        "Content-Type": "application/json",
       },
-      {
-        headers: {
-          Authorization: `Bearer ${GROQ_API_KEY}`,
-          "Content-Type": "application/json",
-        },
-      }
-    );
-
-    const replyText =
-      response.data.choices[0].message.content;
-
-    // ✅ Google Sheets logging
-    if (LOG_WEBHOOK_URL) {
-      await fetch(LOG_WEBHOOK_URL, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          user: userText,
-          reply: replyText,
-          time: new Date().toISOString(),
-        }),
-      });
     }
+  );
 
-    res.json({ reply: replyText });
-
-  } catch (err) {
-    console.error(err);
-    res.json({ reply: "Sorry, something went wrong." });
+  const raw = res.data.choices[0].message.content;
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return { lang: "en", reply: raw };
   }
+}
+
+/* -------------------------------
+   TWILIO ENTRY POINT
+-------------------------------- */
+app.post("/twilio/voice", (req, res) => {
+  const twiml = new twilio.twiml.VoiceResponse();
+
+  const gather = twiml.gather({
+    input: "speech",
+    timeout: 4,
+    speechTimeout: "auto",
+    method: "POST",
+    action: "/twilio/process",
+  });
+
+  gather.say(
+    { voice: "Polly.Aditi", language: "hi-IN" },
+    "Namaste. Government scheme helpline. How may I help you?"
+  );
+
+  res.type("text/xml");
+  res.send(twiml.toString());
 });
 
-// ------------------
-// Start server
-// ------------------
+/* -------------------------------
+   PROCESS SPEECH
+-------------------------------- */
+app.post("/twilio/process", async (req, res) => {
+  const speech = req.body.SpeechResult || "";
+
+  const { lang, reply } = await askAI(speech);
+
+  let sayOptions = { voice: "Polly.Joanna", language: "en-US" };
+  if (lang === "hi") sayOptions = { voice: "Polly.Aditi", language: "hi-IN" };
+  if (lang === "gu") sayOptions = { voice: "Polly.Aditi", language: "hi-IN" };
+
+  const twiml = new twilio.twiml.VoiceResponse();
+  twiml.say(sayOptions, reply);
+  twiml.pause({ length: 1 });
+  twiml.redirect("/twilio/voice");
+
+  res.type("text/xml");
+  res.send(twiml.toString());
+});
+
+/* -------------------------------
+   OUTBOUND CALL (OPTIONAL)
+-------------------------------- */
+app.post("/start-call", async (req, res) => {
+  const { to } = req.body;
+  if (!to) return res.status(400).json({ error: "Missing number" });
+
+  const call = await client.calls.create({
+    to,
+    from: TWILIO_PHONE_NUMBER,
+    url: `${RENDER_EXTERNAL_URL}/twilio/voice`,
+  });
+
+  res.json({ success: true, sid: call.sid });
+});
+
+/* -------------------------------
+   HEALTH
+-------------------------------- */
+app.get("/health", (_, res) => res.json({ ok: true }));
+
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () =>
-  console.log(`✅ Voice Agent running on port ${PORT}`)
+  console.log(`📞 Phone agent running on port ${PORT}`)
 );
