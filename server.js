@@ -1,4 +1,3 @@
-import fetch from "node-fetch";
 import express from "express";
 import dotenv from "dotenv";
 import axios from "axios";
@@ -24,14 +23,14 @@ const GROQ_API_KEY = process.env.GROQ_API_KEY;
 const LOG_WEBHOOK_URL = process.env.LOG_WEBHOOK_URL;
 
 // ------------------
-// Health check (Render)
+// Health check
 // ------------------
 app.get("/health", (_, res) => {
   res.json({ status: "ok" });
 });
 
 // ------------------
-// Talk API (Government-grade)
+// Talk API
 // ------------------
 app.post("/api/talk", async (req, res) => {
   const userText = req.body.text;
@@ -51,35 +50,17 @@ app.post("/api/talk", async (req, res) => {
             content: `
 You are an official Government of India Scheme Information Assistant.
 
-You may ONLY provide information about these government schemes:
-1. Pradhan Mantri Awas Yojana (PMAY)
-2. Ayushman Bharat – PM-JAY
-3. PM Kisan Samman Nidhi
-4. National Pension Scheme (NPS)
-5. Senior Citizen Pension Schemes
-6. Government Scholarships (Central or State)
+You may ONLY provide information about these schemes:
+- PM Awas Yojana
+- Ayushman Bharat
+- PM Kisan
+- Pension / NPS
+- Government Scholarships
 
-STRICT RULES (MANDATORY):
-- NEVER guess eligibility, benefit amounts, approval status, or documents.
-- NEVER promise application, approval, or funds.
-- ALWAYS ask clarification questions before determining eligibility.
-- If a question is outside these schemes, politely explain you can only help with government scheme information.
-- Reply strictly in the SAME language as the user (English, Hindi, Gujarati).
-- Keep responses short, polite, formal, and factual.
-- Do NOT hallucinate any data.
-
-SCHEME GUIDANCE:
-PMAY → ask rural/urban location, existing house status  
-Ayushman Bharat → ask SECC inclusion or ration card  
-PM-Kisan → ask farmer status and land ownership  
-Pension/NPS → ask age and employment status  
-Scholarships → ask education level, category, and state  
-
-If unclear, direct users ONLY to official portals:
-- pmaymis.gov.in
-- pmjay.gov.in
-- pmkisan.gov.in
-- npscra.nsdl.co.in
+Rules:
+- Reply in English, Hindi, or Gujarati (same as user)
+- Be factual, polite, short
+- Ask clarification questions
 `
           },
           { role: "user", content: userText }
@@ -88,15 +69,39 @@ If unclear, direct users ONLY to official portals:
       {
         headers: {
           Authorization: `Bearer ${GROQ_API_KEY}`,
-          "Content-Type": "application/json"
-        }
+          "Content-Type": "application/json",
+        },
       }
     );
 
-    const replyText = response.data.choices[0].message.content;
+    const replyText =
+      response.data.choices[0].message.content;
 
-    // ------------------
-    // Google Sheets logging (free)
-    // ------------------
+    // ✅ Google Sheets logging
     if (LOG_WEBHOOK_URL) {
-      fetch(LOG_WEB_
+      await fetch(LOG_WEBHOOK_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          user: userText,
+          reply: replyText,
+          time: new Date().toISOString(),
+        }),
+      });
+    }
+
+    res.json({ reply: replyText });
+
+  } catch (err) {
+    console.error(err);
+    res.json({ reply: "Sorry, something went wrong." });
+  }
+});
+
+// ------------------
+// Start server
+// ------------------
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () =>
+  console.log(`✅ Voice Agent running on port ${PORT}`)
+);
