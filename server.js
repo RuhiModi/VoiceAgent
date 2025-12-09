@@ -3,7 +3,9 @@ import dotenv from "dotenv";
 import axios from "axios";
 import path from "path";
 import { fileURLToPath } from "url";
-import twilio from "twilio";
+import twilioPkg from "twilio";
+const twilio = twilioPkg;
+
 
 dotenv.config();
 
@@ -160,7 +162,7 @@ app.post("/twilio/gather", async (req, res) => {
   }
 
   const twiml = new twilio.twiml.VoiceResponse();
-  twiml.say({ voice: "Polly.Aditi", language: "hi-IN" }, replyText);
+  twiml.say({ voice: "Polly.Aditi", language: "hi-IN-gu" }, replyText);
   twiml.pause({ length: 1 });
   twiml.redirect(`${RENDER_EXTERNAL_URL}/twilio/voice`);
 
