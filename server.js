@@ -5,13 +5,12 @@ import path from "path";
 import { fileURLToPath } from "url";
 import twilioPkg from "twilio";
 
-dotenv.config(); // ✅ MUST BE FIRST
+/* =====================
+   INIT
+===================== */
+dotenv.config(); // ✅ MUST be first
 
 const twilio = twilioPkg;
-
-/* =====================
-   BASIC SETUP
-===================== */
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
@@ -33,12 +32,12 @@ const {
   INTERNAL_API_KEY
 } = process.env;
 
-if (!RENDER_EXTERNAL_URL) {
-  console.error("❌ RENDER_EXTERNAL_URL is missing");
-}
-
 if (!INTERNAL_API_KEY) {
   console.error("❌ INTERNAL_API_KEY is missing");
+}
+
+if (!RENDER_EXTERNAL_URL) {
+  console.error("❌ RENDER_EXTERNAL_URL is missing");
 }
 
 /* =====================
@@ -73,12 +72,12 @@ async function askGroq(userText) {
 You are an OFFICIAL Government Scheme Voice Assistant.
 
 Rules:
-- Detect language automatically (Hindi, Gujarati, English)
+- Detect user language (Hindi/Gujarati/English)
 - Reply ONLY in same language
 - Max 60 words
-- Speak naturally for phone calls
+- Phone-friendly speech
 - Ask clarifying questions
-- Never promise benefits or money
+- Never promise benefits
 `
           },
           { role: "user", content: userText }
@@ -95,12 +94,12 @@ Rules:
     return response.data.choices[0].message.content;
   } catch (e) {
     console.error("Groq Error:", e.message);
-    return "Sorry, I am unable to answer right now.";
+    return "क्षमा करें, अभी उत्तर उपलब्ध नहीं है।";
   }
 }
 
 /* =====================
-   WEB CHAT (BROWSER)
+   WEB CHAT
 ===================== */
 app.post("/api/talk", async (req, res) => {
   const userText = req.body.text;
@@ -113,7 +112,7 @@ app.post("/api/talk", async (req, res) => {
       channel: "web",
       user_message: userText,
       ai_reply: replyText,
-      timestamp: new Date().toISOString()
+      time: new Date().toISOString()
     }).catch(() => {});
   }
 
@@ -129,7 +128,7 @@ app.post("/twilio/voice", (req, res) => {
 
   const gather = twiml.gather({
     input: "speech",
-    action: `${RENDER_EXTERNAL_URL}/twilio/gather`,
+    action: "/twilio/gather",
     method: "POST",
     speechTimeout: "auto",
     language: "hi-IN",
@@ -139,14 +138,14 @@ app.post("/twilio/voice", (req, res) => {
 
   gather.say(
     { voice: "Polly.Aditi", language: "hi-IN" },
-    "नमस्ते। यह सरकारी सहायता हेल्पलाइन है। कृपया बताइए मैं आपकी कैसे मदद कर सकता हूँ?"
+    "नमस्ते। यह सरकारी सहायता हेल्पलाइन है। आप क्या जानना चाहते हैं?"
   );
 
   res.type("text/xml").send(twiml.toString());
 });
 
 /* =====================
-   TWILIO GATHER HANDLER
+   TWILIO GATHER
 ===================== */
 app.post("/twilio/gather", async (req, res) => {
   const speech = req.body.SpeechResult || "";
@@ -157,14 +156,13 @@ app.post("/twilio/gather", async (req, res) => {
       channel: "call",
       user_message: speech,
       ai_reply: replyText,
-      timestamp: new Date().toISOString()
+      time: new Date().toISOString()
     }).catch(() => {});
   }
 
   const twiml = new twilio.twiml.VoiceResponse();
   twiml.say({ voice: "Polly.Aditi", language: "hi-IN" }, replyText);
-  twiml.pause({ length: 0.4 });
-  twiml.say("क्या आप कुछ और पूछना चाहेंगे?");
+  twiml.pause({ length: 0.5 });
   twiml.redirect(`${RENDER_EXTERNAL_URL}/twilio/voice`);
 
   res.type("text/xml").send(twiml.toString());
@@ -174,18 +172,18 @@ app.post("/twilio/gather", async (req, res) => {
    START OUTBOUND CALL (PROTECTED)
 ===================== */
 app.post("/start-call", async (req, res) => {
-  const apiKey = String(req.headers["x-api-key"] || "").trim();
+  const apiKey = req.headers["x-api-key"];
 
-  if (apiKey !== INTERNAL_API_KEY) {
+  if (!INTERNAL_API_KEY || apiKey !== INTERNAL_API_KEY) {
     return res.status(401).json({ error: "Unauthorized" });
   }
 
   let to = String(req.body?.to || "").trim();
 
-  const e164Regex = /^\+[1-9]\d{9,14}$/;
-  if (!e164Regex.test(to)) {
+  const e164 = /^\+[1-9]\d{9,14}$/;
+  if (!e164.test(to)) {
     return res.status(400).json({
-      error: "Phone number must be valid E.164 format (ex: +919XXXXXXXXX)",
+      error: "Phone number must be valid E.164 format",
       received: to
     });
   }
@@ -199,7 +197,7 @@ app.post("/start-call", async (req, res) => {
 
     res.json({ success: true, sid: call.sid });
   } catch (err) {
-    console.error("Twilio Call Error:", err.message);
+    console.error("Twilio Error:", err.message);
     res.status(500).json({ error: err.message });
   }
 });
