@@ -45,14 +45,14 @@ const twilioClient = twilio(
    LANGUAGE DETECTION
 ===================== */
 function detectLanguage(text = "") {
-  if (/[\u0A80-\u0AFF]/.test(text)) return "gu"; // Gujarati
-  if (/[\u0900-\u097F]/.test(text)) return "hi"; // Hindi
-  return "en"; // English
+  if (/[\u0A80-\u0AFF]/.test(text)) return "gu";
+  if (/[\u0900-\u097F]/.test(text)) return "hi";
+  return "en";
 }
 
 function getVoice(lang) {
   if (lang === "hi") return { voice: "Polly.Aditi", language: "hi-IN" };
-  return { voice: "alice", language: "en-IN" }; // English + Gujarati fallback
+  return { voice: "alice", language: "en-IN" };
 }
 
 /* =====================
@@ -73,10 +73,10 @@ You are an official Government Scheme Voice Assistant.
 
 Rules:
 - Reply ONLY in the user's language (${lang})
-- Gujarati, Hindi, or English only
-- Keep answers under 60 words
-- Be clear and conversational
-- If the user asks for a human, officer, agent, operator, or help beyond data, DO NOT reply — just remain silent
+- Gujarati / Hindi / English only
+- Max 60 words
+- If user wants a human or your knowledge is insufficient, REPLY ONLY WITH:
+ESCALATE
 `
           },
           { role: "user", content: userText }
@@ -92,7 +92,7 @@ Rules:
 
     return response.data.choices[0].message.content.trim();
   } catch {
-    return "";
+    return "ESCALATE";
   }
 }
 
@@ -141,30 +141,28 @@ app.post("/twilio/gather", async (req, res) => {
     return res.type("text/xml").send(twiml.toString());
   }
 
-  /* ✅ SILENT HUMAN TRANSFER (NO MESSAGE, NO DROP) */
-  const wantsHuman = /(human|agent|officer|operator|manager|complaint|help)/i.test(
-    userSpeech
-  );
+  const lang = detectLanguage(userSpeech);
+  const aiReply = await askGroq(userSpeech, lang);
 
-  if (wantsHuman && HUMAN_AGENT_NUMBER) {
+  /* ✅ SILENT HUMAN TRANSFER – PERFECT */
+  if (
+    aiReply === "ESCALATE" ||
+    /(human|agent|officer|operator|manager|complaint|help)/i.test(userSpeech)
+  ) {
+    // 🔇 Flush audio buffers
+    twiml.pause({ length: 1 });
+
     const dial = twiml.dial({
       callerId: TWILIO_PHONE_NUMBER,
-      timeout: 20
+      timeout: 30,
+      answerOnBridge: true
     });
 
     dial.number(HUMAN_AGENT_NUMBER);
 
-    // ✅ If human does NOT answer → fallback to AI quietly
-    twiml.redirect("/twilio/voice");
-
     return res.type("text/xml").send(twiml.toString());
   }
 
-  /* =====================
-     AI RESPONSE
-  ===================== */
-  const lang = detectLanguage(userSpeech);
-  const reply = await askGroq(userSpeech, lang);
   const voice = getVoice(lang);
 
   /* ✅ LOG TO GOOGLE SHEET */
@@ -175,7 +173,7 @@ app.post("/twilio/gather", async (req, res) => {
       body: JSON.stringify({
         phone: from,
         userSpeech,
-        aiReply: reply,
+        aiReply,
         language: lang,
         time: new Date().toISOString()
       })
@@ -193,7 +191,7 @@ app.post("/twilio/gather", async (req, res) => {
     language: "en-IN"
   });
 
-  gather.say(voice, reply || "");
+  gather.say(voice, aiReply);
 
   res.type("text/xml").send(twiml.toString());
 });
