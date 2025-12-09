@@ -108,15 +108,16 @@ app.post("/twilio/voice", (req, res) => {
   const twiml = new twilio.twiml.VoiceResponse();
 
   const gather = twiml.gather({
-    input: "speech",
-    action: "/twilio/gather",
-    method: "POST",
-    bargeIn: true,
-    speechTimeout: "auto",
-    enhanced: true,
-    speechModel: "phone_call",
-    language: "hi-IN" // neutral start
-  });
+  input: "speech",
+  action: "/twilio/gather",
+  method: "POST",
+  bargeIn: true,
+  speechTimeout: "auto",
+  enhanced: true,
+  speechModel: "phone_call",
+  language: "en-IN" // ✅ ALWAYS ENGLISH LISTENING
+});
+
 
   gather.say(
     { voice: "Polly.Aditi", language: "hi-IN" },
@@ -131,6 +132,18 @@ app.post("/twilio/voice", (req, res) => {
 ===================== */
 app.post("/twilio/gather", async (req, res) => {
   const userSpeech = req.body.SpeechResult || "";
+   
+  const gather = twiml.gather({
+  input: "speech",
+  action: "/twilio/gather",
+  method: "POST",
+  bargeIn: true,
+  speechTimeout: "auto",
+  enhanced: true,
+  speechModel: "phone_call",
+  language: "en-IN" // ✅ ALWAYS ENGLISH LISTENING
+});
+
 
   // If silence, restart listening
   if (!userSpeech) {
