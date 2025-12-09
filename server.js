@@ -41,15 +41,24 @@ const twilioClient = twilio(
    LANGUAGE DETECTION
 ===================== */
 function detectLanguage(text = "") {
-  if (/[\u0A80-\u0AFF]/.test(text)) return "gu-IN"; // Gujarati
-  if (/[\u0900-\u097F]/.test(text)) return "hi-IN"; // Hindi
-  return "en-IN"; // Default English
+  if (/[\u0A80-\u0AFF]/.test(text)) return "gu"; // Gujarati
+  if (/[\u0900-\u097F]/.test(text)) return "hi"; // Hindi
+  return "en"; // English
 }
 
 function getVoice(lang) {
-  if (lang === "gu-IN") return { voice: "alice", language: "gu-IN" };
-  if (lang === "hi-IN") return { voice: "Polly.Aditi", language: "hi-IN" };
+  // ⚠️ Twilio has NO Gujarati voice
+  if (lang === "hi") {
+    return { voice: "Polly.Aditi", language: "hi-IN" };
+  }
+  // English + Gujarati fallback
   return { voice: "alice", language: "en-IN" };
+}
+
+function getGatherLanguage(lang) {
+  // Twilio speech recognition works best this way
+  if (lang === "hi") return "hi-IN";
+  return "en-IN"; // Gujarati + English
 }
 
 /* =====================
@@ -67,11 +76,12 @@ async function askGroq(userText, lang) {
             role: "system",
             content: `
 You are a Government Scheme Voice Assistant.
+
 Rules:
-- Reply ONLY in the same language as the user
-- Be polite, short, and conversational
-- If unsure, ask a clarifying question
-Language: ${lang}
+- Detect the user's language (Gujarati, Hindi, English)
+- Reply ONLY in the same language
+- Do NOT mix languages
+- Keep responses short, clear, and conversational
 `
           },
           { role: "user", content: userText }
@@ -92,21 +102,20 @@ Language: ${lang}
 }
 
 /* =====================
-   TWILIO ENTRY
+   TWILIO ENTRY (Call Start)
 ===================== */
 app.post("/twilio/voice", (req, res) => {
-  const VoiceResponse = twilio.twiml.VoiceResponse;
-  const twiml = new VoiceResponse();
+  const twiml = new twilio.twiml.VoiceResponse();
 
   const gather = twiml.gather({
     input: "speech",
     action: "/twilio/gather",
     method: "POST",
+    bargeIn: true,
     speechTimeout: "auto",
-    bargeIn: true,                 // ✅ interrupt anytime
     enhanced: true,
     speechModel: "phone_call",
-    language: "hi-IN"              // neutral start
+    language: "hi-IN" // neutral start
   });
 
   gather.say(
@@ -123,6 +132,7 @@ app.post("/twilio/voice", (req, res) => {
 app.post("/twilio/gather", async (req, res) => {
   const userSpeech = req.body.SpeechResult || "";
 
+  // If silence, restart listening
   if (!userSpeech) {
     const vr = new twilio.twiml.VoiceResponse();
     vr.redirect("/twilio/voice");
@@ -132,8 +142,9 @@ app.post("/twilio/gather", async (req, res) => {
   const lang = detectLanguage(userSpeech);
   const reply = await askGroq(userSpeech, lang);
   const voice = getVoice(lang);
+  const gatherLang = getGatherLanguage(lang);
 
-  // ✅ Optional log (Google Sheet / webhook)
+  /* ✅ LOG TO GOOGLE SHEET (optional) */
   if (LOG_WEBHOOK_URL) {
     fetch(LOG_WEBHOOK_URL, {
       method: "POST",
@@ -154,17 +165,16 @@ app.post("/twilio/gather", async (req, res) => {
     input: "speech",
     action: "/twilio/gather",
     method: "POST",
-    bargeIn: true,                // ✅ human interruption
+    bargeIn: true,
     speechTimeout: "auto",
     enhanced: true,
     speechModel: "phone_call",
-    language: lang
+    language: gatherLang
   });
 
   gather.say(voice, reply);
 
   twiml.redirect("/twilio/voice");
-
   res.type("text/xml").send(twiml.toString());
 });
 
