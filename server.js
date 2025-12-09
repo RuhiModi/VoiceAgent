@@ -173,15 +173,24 @@ app.post("/twilio/gather", async (req, res) => {
    START OUTBOUND CALL
 ===================== */
 app.post("/start-call", async (req, res) => {
-  const { to } = req.body;
+  console.log("RAW BODY:", req.body);
+  console.log("TYPE OF to:", typeof req.body?.to);
 
- const e164Regex = /^\+[1-9]\d{9,14}$/;
+  let { to } = req.body;
 
-if (!to || !e164Regex.test(to)) {
-  return res.status(400).json({
-    error: "Phone number must be valid E.164 format (ex: +919XXXXXXXXX)"
-  });
-}
+  // Force clean string
+  to = String(to || "").trim();
+
+  console.log("CLEANED TO:", to);
+
+  const e164Regex = /^\+[1-9]\d{9,14}$/;
+
+  if (!to || !e164Regex.test(to)) {
+    return res.status(400).json({
+      error: "Phone number must be valid E.164 format (ex: +919XXXXXXXXX)",
+      received: to
+    });
+  }
 
   try {
     const call = await twilioClient.calls.create({
@@ -192,10 +201,11 @@ if (!to || !e164Regex.test(to)) {
 
     res.json({ success: true, sid: call.sid });
   } catch (err) {
-    console.error("Call error:", err.message);
+    console.error("Twilio Call Error:", err.message);
     res.status(500).json({ error: err.message });
   }
 });
+
 
 /* =====================
    START SERVER
