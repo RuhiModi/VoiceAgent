@@ -4,11 +4,10 @@ import axios from "axios";
 import path from "path";
 import { fileURLToPath } from "url";
 import twilioPkg from "twilio";
+
+dotenv.config(); // ✅ MUST BE FIRST
+
 const twilio = twilioPkg;
-const API_KEY = process.env.INTERNAL_API_KEY;
-
-
-dotenv.config();
 
 /* =====================
    BASIC SETUP
@@ -30,11 +29,16 @@ const {
   TWILIO_ACCOUNT_SID,
   TWILIO_AUTH_TOKEN,
   TWILIO_PHONE_NUMBER,
-  RENDER_EXTERNAL_URL
+  RENDER_EXTERNAL_URL,
+  INTERNAL_API_KEY
 } = process.env;
 
 if (!RENDER_EXTERNAL_URL) {
   console.error("❌ RENDER_EXTERNAL_URL is missing");
+}
+
+if (!INTERNAL_API_KEY) {
+  console.error("❌ INTERNAL_API_KEY is missing");
 }
 
 /* =====================
@@ -69,12 +73,12 @@ async function askGroq(userText) {
 You are an OFFICIAL Government Scheme Voice Assistant.
 
 Rules:
-- First, detect the user's language (Hindi, Gujarati, or English)
-- Reply ONLY in the same language
-- Keep responses under 60 words
-- Speak naturally for phone conversations
-- Ask clarifying questions when needed
-- Never promise benefits, approval, or money
+- Detect language automatically (Hindi, Gujarati, English)
+- Reply ONLY in same language
+- Max 60 words
+- Speak naturally for phone calls
+- Ask clarifying questions
+- Never promise benefits or money
 `
           },
           { role: "user", content: userText }
@@ -96,7 +100,7 @@ Rules:
 }
 
 /* =====================
-   WEB VOICE (BROWSER)
+   WEB CHAT (BROWSER)
 ===================== */
 app.post("/api/talk", async (req, res) => {
   const userText = req.body.text;
@@ -105,17 +109,11 @@ app.post("/api/talk", async (req, res) => {
   const replyText = await askGroq(userText);
 
   if (LOG_WEBHOOK_URL) {
-    fetch(LOG_WEBHOOK_URL, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-      channel: "call",
-      phone: req.body.From || null,
-      user_message: speech,
+    axios.post(LOG_WEBHOOK_URL, {
+      channel: "web",
+      user_message: userText,
       ai_reply: replyText,
-      timestamp: new Date().toISOString(),
-      language: "auto"
-    })
+      timestamp: new Date().toISOString()
     }).catch(() => {});
   }
 
@@ -131,12 +129,12 @@ app.post("/twilio/voice", (req, res) => {
 
   const gather = twiml.gather({
     input: "speech",
-    action: "/twilio/gather",
+    action: `${RENDER_EXTERNAL_URL}/twilio/gather`,
     method: "POST",
     speechTimeout: "auto",
     language: "hi-IN",
-   enhanced: true,        // ✅ better speech recognition
-   speechModel: "phone_call" // ✅ optimized for calls
+    enhanced: true,
+    speechModel: "phone_call"
   });
 
   gather.say(
@@ -148,22 +146,18 @@ app.post("/twilio/voice", (req, res) => {
 });
 
 /* =====================
-   TWILIO SPEECH HANDLER
+   TWILIO GATHER HANDLER
 ===================== */
 app.post("/twilio/gather", async (req, res) => {
   const speech = req.body.SpeechResult || "";
   const replyText = await askGroq(speech);
 
   if (LOG_WEBHOOK_URL) {
-    fetch(LOG_WEBHOOK_URL, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        channel: "call",
-        user: speech,
-        reply: replyText,
-        time: new Date().toISOString()
-      })
+    axios.post(LOG_WEBHOOK_URL, {
+      channel: "call",
+      user_message: speech,
+      ai_reply: replyText,
+      timestamp: new Date().toISOString()
     }).catch(() => {});
   }
 
@@ -177,26 +171,19 @@ app.post("/twilio/gather", async (req, res) => {
 });
 
 /* =====================
-   START OUTBOUND CALL
+   START OUTBOUND CALL (PROTECTED)
 ===================== */
 app.post("/start-call", async (req, res) => {
+  const apiKey = String(req.headers["x-api-key"] || "").trim();
 
-  // 🔐 Protect endpoint
-  const apiKey = req.headers["x-api-key"];
-  if (!process.env.INTERNAL_API_KEY || apiKey !== process.env.INTERNAL_API_KEY) {
+  if (apiKey !== INTERNAL_API_KEY) {
     return res.status(401).json({ error: "Unauthorized" });
   }
 
-  console.log("RAW BODY:", req.body);
-
-  const toRaw = req.body?.to;
-  let to = String(toRaw || "").trim();
-
-  console.log("CLEANED TO:", to);
+  let to = String(req.body?.to || "").trim();
 
   const e164Regex = /^\+[1-9]\d{9,14}$/;
-
-  if (!to || !e164Regex.test(to)) {
+  if (!e164Regex.test(to)) {
     return res.status(400).json({
       error: "Phone number must be valid E.164 format (ex: +919XXXXXXXXX)",
       received: to
@@ -216,8 +203,6 @@ app.post("/start-call", async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
-
-
 
 /* =====================
    START SERVER
