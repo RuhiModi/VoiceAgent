@@ -175,11 +175,13 @@ app.post("/twilio/gather", async (req, res) => {
 app.post("/start-call", async (req, res) => {
   const { to } = req.body;
 
-  if (!to || !to.startsWith("+")) {
-    return res.status(400).json({
-      error: "Phone number must be in E.164 format (ex: +919XXXXXXXXX)"
-    });
-  }
+ const e164Regex = /^\+[1-9]\d{9,14}$/;
+
+if (!to || !e164Regex.test(to)) {
+  return res.status(400).json({
+    error: "Phone number must be valid E.164 format (ex: +919XXXXXXXXX)"
+  });
+}
 
   try {
     const call = await twilioClient.calls.create({
