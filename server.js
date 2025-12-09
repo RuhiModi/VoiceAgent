@@ -5,6 +5,7 @@ import path from "path";
 import { fileURLToPath } from "url";
 import twilioPkg from "twilio";
 const twilio = twilioPkg;
+const API_KEY = process.env.INTERNAL_API_KEY;
 
 
 dotenv.config();
@@ -108,11 +109,13 @@ app.post("/api/talk", async (req, res) => {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        channel: "web",
-        user: userText,
-        reply: replyText,
-        time: new Date().toISOString()
-      })
+      channel: "call",
+      phone: req.body.From || null,
+      user_message: speech,
+      ai_reply: replyText,
+      timestamp: new Date().toISOString(),
+      language: "auto"
+    })
     }).catch(() => {});
   }
 
@@ -131,7 +134,9 @@ app.post("/twilio/voice", (req, res) => {
     action: "/twilio/gather",
     method: "POST",
     speechTimeout: "auto",
-    language: "hi-IN"
+    language: "hi-IN",
+   enhanced: true,        // ✅ better speech recognition
+   speechModel: "phone_call" // ✅ optimized for calls
   });
 
   gather.say(
@@ -163,8 +168,9 @@ app.post("/twilio/gather", async (req, res) => {
   }
 
   const twiml = new twilio.twiml.VoiceResponse();
-  twiml.say({ voice: "Polly.Aditi", language: "hi-IN-gu" }, replyText);
-  twiml.pause({ length: 1 });
+  twiml.say({ voice: "Polly.Aditi", language: "hi-IN" }, replyText);
+  twiml.pause({ length: 0.4 });
+  twiml.say("क्या आप कुछ और पूछना चाहेंगे?");
   twiml.redirect(`${RENDER_EXTERNAL_URL}/twilio/voice`);
 
   res.type("text/xml").send(twiml.toString());
@@ -174,13 +180,17 @@ app.post("/twilio/gather", async (req, res) => {
    START OUTBOUND CALL
 ===================== */
 app.post("/start-call", async (req, res) => {
+
+  // 🔐 Protect endpoint
+  const apiKey = req.headers["x-api-key"];
+  if (!process.env.INTERNAL_API_KEY || apiKey !== process.env.INTERNAL_API_KEY) {
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+
   console.log("RAW BODY:", req.body);
-  console.log("TYPE OF to:", typeof req.body?.to);
 
-  let { to } = req.body;
-
-  // Force clean string
-  to = String(to || "").trim();
+  const toRaw = req.body?.to;
+  let to = String(toRaw || "").trim();
 
   console.log("CLEANED TO:", to);
 
@@ -206,6 +216,7 @@ app.post("/start-call", async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
+
 
 
 /* =====================
