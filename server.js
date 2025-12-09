@@ -33,9 +33,6 @@ const {
   HUMAN_AGENT_NUMBER
 } = process.env;
 
-/* =====================
-   TWILIO CLIENT
-===================== */
 const twilioClient = twilio(
   TWILIO_ACCOUNT_SID,
   TWILIO_AUTH_TOKEN
@@ -52,20 +49,13 @@ function detectLanguage(text = "") {
 
 function getVoice(lang) {
   if (lang === "hi") return { voice: "Polly.Aditi", language: "hi-IN" };
-  // Gujarati has no native Twilio TTS → English voice fallback
-  return { voice: "alice", language: "en-IN" };
-}
-
-function getGatherLang(lang) {
-  // Best recognition settings
-  if (lang === "hi") return "hi-IN";
-  return "en-IN"; // English + Gujarati
+  return { voice: "alice", language: "en-IN" }; // English + Gujarati fallback
 }
 
 /* =====================
    GROQ AI
 ===================== */
-async function askGroq(userText) {
+async function askGroq(userText, lang) {
   try {
     const response = await axios.post(
       "https://api.groq.com/openai/v1/chat/completions",
@@ -76,15 +66,15 @@ async function askGroq(userText) {
           {
             role: "system",
             content: `
-You are an OFFICIAL Government Scheme Voice Assistant.
+You are a Government Scheme Voice Assistant.
 
 Rules:
 - Detect the user's language (Gujarati, Hindi, English)
 - Reply ONLY in the same language
-- Keep answers under 60 words
-- If unsure, or user asks for human / officer / agent:
-Reply ONLY with this exact token:
-ESCALATE_TO_HUMAN
+- Keep replies under 60 words
+- Speak naturally for phone calls
+- Ask a question if more info is needed
+- Never promise approval or money
 `
           },
           { role: "user", content: userText }
@@ -98,9 +88,9 @@ ESCALATE_TO_HUMAN
       }
     );
 
-    return response.data.choices[0].message.content.trim();
-  } catch {
-    return "ESCALATE_TO_HUMAN";
+    return response.data.choices[0].message.content;
+  } catch (e) {
+    return "Sorry, I’m having trouble right now.";
   }
 }
 
@@ -112,7 +102,7 @@ app.get("/health", (_, res) => {
 });
 
 /* =====================
-   TWILIO CALL START
+   CALL ENTRY POINT
 ===================== */
 app.post("/twilio/voice", (req, res) => {
   const twiml = new twilio.twiml.VoiceResponse();
@@ -125,12 +115,12 @@ app.post("/twilio/voice", (req, res) => {
     speechTimeout: "auto",
     enhanced: true,
     speechModel: "phone_call",
-    language: "en-IN"
+    language: "en-IN" // ✅ ALWAYS ENGLISH LISTENING
   });
 
   gather.say(
     { voice: "Polly.Aditi", language: "hi-IN" },
-    "नमस्ते। તમે ગુજરાતી, हिंदी या English में बात कर सकते हैं। कृपया अपना सवाल पूछिए।"
+    "नमस्ते। તમે ગુજરાતી, हिंदी या English में बात कर सकते हैं। आप क्या जानना चाहते हैं?"
   );
 
   res.type("text/xml").send(twiml.toString());
@@ -141,100 +131,4 @@ app.post("/twilio/voice", (req, res) => {
 ===================== */
 app.post("/twilio/gather", async (req, res) => {
   const userSpeech = req.body.SpeechResult || "";
-
-  if (!userSpeech) {
-    const vr = new twilio.twiml.VoiceResponse();
-    vr.redirect("/twilio/voice");
-    return res.type("text/xml").send(vr.toString());
-  }
-
-  const reply = await askGroq(userSpeech);
-
-  /* ✅ AI → HUMAN ESCALATION */
-  if (reply === "ESCALATE_TO_HUMAN") {
-    const twiml = new twilio.twiml.VoiceResponse();
-
-    twiml.say(
-      { voice: "Polly.Aditi", language: "hi-IN" },
-      "मैं आपको हमारे अधिकारी से जोड़ रहा हूँ। कृपया प्रतीक्षा करें।"
-    );
-
-    twiml.dial(HUMAN_AGENT_NUMBER);
-
-    return res.type("text/xml").send(twiml.toString());
-  }
-
-  const lang = detectLanguage(userSpeech);
-  const voice = getVoice(lang);
-  const gatherLang = getGatherLang(lang);
-
-  /* ✅ LOG TO GOOGLE SHEET */
-  if (LOG_WEBHOOK_URL) {
-    fetch(LOG_WEBHOOK_URL, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        phone: req.body.From || "Unknown",
-        userSpeech,
-        aiReply: reply,
-        language: lang,
-        time: new Date().toISOString()
-      })
-    }).catch(() => {});
-  }
-
-  const twiml = new twilio.twiml.VoiceResponse();
-
-  const gather = twiml.gather({
-    input: "speech",
-    action: "/twilio/gather",
-    method: "POST",
-    bargeIn: true,
-    speechTimeout: "auto",
-    enhanced: true,
-    speechModel: "phone_call",
-    language: gatherLang
-  });
-
-  gather.say(voice, reply);
-
-  twiml.redirect("/twilio/voice");
-
-  res.type("text/xml").send(twiml.toString());
-});
-
-/* =====================
-   START OUTBOUND CALL
-===================== */
-app.post("/start-call", async (req, res) => {
-  if (req.headers["x-api-key"] !== INTERNAL_API_KEY) {
-    return res.status(401).json({ error: "Unauthorized" });
-  }
-
-  const to = String(req.body?.to || "").trim();
-  const e164 = /^\+[1-9]\d{9,14}$/;
-
-  if (!e164.test(to)) {
-    return res.status(400).json({ error: "Invalid phone number" });
-  }
-
-  try {
-    const call = await twilioClient.calls.create({
-      from: TWILIO_PHONE_NUMBER,
-      to,
-      url: `${RENDER_EXTERNAL_URL}/twilio/voice`
-    });
-
-    res.json({ success: true, sid: call.sid });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-/* =====================
-   SERVER
-===================== */
-const PORT = process.env.PORT || 10000;
-app.listen(PORT, () => {
-  console.log(`✅ Server running on port ${PORT}`);
-});
+ 
