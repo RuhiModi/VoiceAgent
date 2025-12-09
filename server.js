@@ -47,24 +47,14 @@ function detectLanguage(text = "") {
 }
 
 function getVoice(lang) {
-  // ⚠️ Twilio has NO Gujarati voice
-  if (lang === "hi") {
-    return { voice: "Polly.Aditi", language: "hi-IN" };
-  }
-  // English + Gujarati fallback
-  return { voice: "alice", language: "en-IN" };
-}
-
-function getGatherLanguage(lang) {
-  // Twilio speech recognition works best this way
-  if (lang === "hi") return "hi-IN";
-  return "en-IN"; // Gujarati + English
+  if (lang === "hi") return { voice: "Polly.Aditi", language: "hi-IN" };
+  return { voice: "alice", language: "en-IN" }; // English + Gujarati
 }
 
 /* =====================
    AI (GROQ)
 ===================== */
-async function askGroq(userText, lang) {
+async function askGroq(userText) {
   try {
     const response = await axios.post(
       "https://api.groq.com/openai/v1/chat/completions",
@@ -78,10 +68,10 @@ async function askGroq(userText, lang) {
 You are a Government Scheme Voice Assistant.
 
 Rules:
-- Detect the user's language (Gujarati, Hindi, English)
+- Detect whether the user is speaking Gujarati, Hindi, or English
 - Reply ONLY in the same language
-- Do NOT mix languages
-- Keep responses short, clear, and conversational
+- Do not mix languages
+- Keep replies short and conversational
 `
           },
           { role: "user", content: userText }
@@ -97,27 +87,26 @@ Rules:
 
     return response.data.choices[0].message.content;
   } catch {
-    return "माफ़ कीजिए, अभी तकनीकी समस्या है।";
+    return "Sorry, I am facing a technical issue right now.";
   }
 }
 
 /* =====================
-   TWILIO ENTRY (Call Start)
+   TWILIO ENTRY POINT
 ===================== */
 app.post("/twilio/voice", (req, res) => {
   const twiml = new twilio.twiml.VoiceResponse();
 
   const gather = twiml.gather({
-  input: "speech",
-  action: "/twilio/gather",
-  method: "POST",
-  bargeIn: true,
-  speechTimeout: "auto",
-  enhanced: true,
-  speechModel: "phone_call",
-  language: "en-IN" // ✅ ALWAYS ENGLISH LISTENING
-});
-
+    input: "speech",
+    action: "/twilio/gather",
+    method: "POST",
+    bargeIn: true,
+    speechTimeout: "auto",
+    enhanced: true,
+    speechModel: "phone_call",
+    language: "en-IN" // ✅ ALWAYS ENGLISH LISTENING
+  });
 
   gather.say(
     { voice: "Polly.Aditi", language: "hi-IN" },
@@ -132,20 +121,7 @@ app.post("/twilio/voice", (req, res) => {
 ===================== */
 app.post("/twilio/gather", async (req, res) => {
   const userSpeech = req.body.SpeechResult || "";
-   
-  const gather = twiml.gather({
-  input: "speech",
-  action: "/twilio/gather",
-  method: "POST",
-  bargeIn: true,
-  speechTimeout: "auto",
-  enhanced: true,
-  speechModel: "phone_call",
-  language: "en-IN" // ✅ ALWAYS ENGLISH LISTENING
-});
 
-
-  // If silence, restart listening
   if (!userSpeech) {
     const vr = new twilio.twiml.VoiceResponse();
     vr.redirect("/twilio/voice");
@@ -153,11 +129,10 @@ app.post("/twilio/gather", async (req, res) => {
   }
 
   const lang = detectLanguage(userSpeech);
-  const reply = await askGroq(userSpeech, lang);
+  const reply = await askGroq(userSpeech);
   const voice = getVoice(lang);
-  const gatherLang = getGatherLanguage(lang);
 
-  /* ✅ LOG TO GOOGLE SHEET (optional) */
+  /* ✅ OPTIONAL LOGGING */
   if (LOG_WEBHOOK_URL) {
     fetch(LOG_WEBHOOK_URL, {
       method: "POST",
@@ -182,7 +157,7 @@ app.post("/twilio/gather", async (req, res) => {
     speechTimeout: "auto",
     enhanced: true,
     speechModel: "phone_call",
-    language: gatherLang
+    language: "en-IN" // ✅ KEEP IT FIXED
   });
 
   gather.say(voice, reply);
