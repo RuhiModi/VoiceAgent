@@ -32,25 +32,30 @@ const {
   LOG_WEBHOOK_URL
 } = process.env;
 
-/* =====================
-   TWILIO CLIENT
-===================== */
 const twilioClient = twilio(
   TWILIO_ACCOUNT_SID,
   TWILIO_AUTH_TOKEN
 );
 
 /* =====================
-   HEALTH CHECK
+   LANGUAGE DETECTION
 ===================== */
-app.get("/health", (_, res) => {
-  res.json({ status: "ok" });
-});
+function detectLanguage(text = "") {
+  if (/[\u0A80-\u0AFF]/.test(text)) return "gu-IN"; // Gujarati
+  if (/[\u0900-\u097F]/.test(text)) return "hi-IN"; // Hindi
+  return "en-IN"; // Default English
+}
+
+function getVoice(lang) {
+  if (lang === "gu-IN") return { voice: "alice", language: "gu-IN" };
+  if (lang === "hi-IN") return { voice: "Polly.Aditi", language: "hi-IN" };
+  return { voice: "alice", language: "en-IN" };
+}
 
 /* =====================
-   GROQ AI
+   AI (GROQ)
 ===================== */
-async function askGroq(text) {
+async function askGroq(userText, lang) {
   try {
     const response = await axios.post(
       "https://api.groq.com/openai/v1/chat/completions",
@@ -60,10 +65,16 @@ async function askGroq(text) {
         messages: [
           {
             role: "system",
-            content:
-              "You are a Government Scheme Voice Assistant. Reply in the same language as the user. Keep replies short, natural, and conversational."
+            content: `
+You are a Government Scheme Voice Assistant.
+Rules:
+- Reply ONLY in the same language as the user
+- Be polite, short, and conversational
+- If unsure, ask a clarifying question
+Language: ${lang}
+`
           },
-          { role: "user", content: text }
+          { role: "user", content: userText }
         ]
       },
       {
@@ -75,14 +86,13 @@ async function askGroq(text) {
     );
 
     return response.data.choices[0].message.content;
-  } catch (e) {
-    console.error("Groq error:", e.message);
-    return "माफ़ कीजिए, अभी मैं आपकी मदद नहीं कर पा रहा हूँ।";
+  } catch {
+    return "माफ़ कीजिए, अभी तकनीकी समस्या है।";
   }
 }
 
 /* =====================
-   TWILIO CALL ENTRY
+   TWILIO ENTRY
 ===================== */
 app.post("/twilio/voice", (req, res) => {
   const VoiceResponse = twilio.twiml.VoiceResponse;
@@ -93,59 +103,66 @@ app.post("/twilio/voice", (req, res) => {
     action: "/twilio/gather",
     method: "POST",
     speechTimeout: "auto",
+    bargeIn: true,                 // ✅ interrupt anytime
     enhanced: true,
     speechModel: "phone_call",
-    language: "hi-IN"
+    language: "hi-IN"              // neutral start
   });
 
   gather.say(
     { voice: "Polly.Aditi", language: "hi-IN" },
-    "नमस्ते। यह सरकारी योजनाओं की हेल्पलाइन है। आप अपना सवाल पूछिए।"
+    "नमस्ते। તમે ગુજરાતી, हिंदी या English में बात कर सकते हैं। आप क्या जानना चाहते हैं?"
   );
 
   res.type("text/xml").send(twiml.toString());
 });
 
 /* =====================
-   TWILIO CONTINUOUS CONVERSATION
+   CONTINUOUS CONVERSATION
 ===================== */
 app.post("/twilio/gather", async (req, res) => {
   const userSpeech = req.body.SpeechResult || "";
-  const fromNumber = req.body.From || "Unknown";
 
-  const reply = await askGroq(userSpeech);
-
-  /* ✅ LOG TO GOOGLE SHEETS */
-  if (LOG_WEBHOOK_URL) {
-    axios
-      .post(LOG_WEBHOOK_URL, {
-        phone: fromNumber,
-        userSpeech: userSpeech,
-        aiReply: reply,
-        language: "auto"
-      })
-      .catch(() => {});
+  if (!userSpeech) {
+    const vr = new twilio.twiml.VoiceResponse();
+    vr.redirect("/twilio/voice");
+    return res.type("text/xml").send(vr.toString());
   }
 
-  const VoiceResponse = twilio.twiml.VoiceResponse;
-  const twiml = new VoiceResponse();
+  const lang = detectLanguage(userSpeech);
+  const reply = await askGroq(userSpeech, lang);
+  const voice = getVoice(lang);
+
+  // ✅ Optional log (Google Sheet / webhook)
+  if (LOG_WEBHOOK_URL) {
+    fetch(LOG_WEBHOOK_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        phone: req.body.From || "Unknown",
+        userSpeech,
+        aiReply: reply,
+        language: lang,
+        time: new Date().toISOString()
+      })
+    }).catch(() => {});
+  }
+
+  const twiml = new twilio.twiml.VoiceResponse();
 
   const gather = twiml.gather({
     input: "speech",
     action: "/twilio/gather",
     method: "POST",
+    bargeIn: true,                // ✅ human interruption
     speechTimeout: "auto",
     enhanced: true,
     speechModel: "phone_call",
-    language: "hi-IN"
+    language: lang
   });
 
-  gather.say(
-    { voice: "Polly.Aditi", language: "hi-IN" },
-    reply
-  );
+  gather.say(voice, reply);
 
-  // If silence, restart flow
   twiml.redirect("/twilio/voice");
 
   res.type("text/xml").send(twiml.toString());
@@ -155,8 +172,7 @@ app.post("/twilio/gather", async (req, res) => {
    START OUTBOUND CALL
 ===================== */
 app.post("/start-call", async (req, res) => {
-  const apiKey = req.headers["x-api-key"];
-  if (apiKey !== INTERNAL_API_KEY) {
+  if (req.headers["x-api-key"] !== INTERNAL_API_KEY) {
     return res.status(401).json({ error: "Unauthorized" });
   }
 
@@ -176,13 +192,12 @@ app.post("/start-call", async (req, res) => {
 
     res.json({ success: true, sid: call.sid });
   } catch (err) {
-    console.error("Twilio error:", err.message);
     res.status(500).json({ error: err.message });
   }
 });
 
 /* =====================
-   START SERVER
+   SERVER
 ===================== */
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => {
