@@ -20,7 +20,7 @@ app.use(express.urlencoded({ extended: true }));
 app.use(express.static(path.join(__dirname, "public")));
 
 /* =====================
-   ENVIRONMENT
+   ENV VARIABLES
 ===================== */
 const {
   GROQ_API_KEY,
@@ -29,9 +29,13 @@ const {
   TWILIO_PHONE_NUMBER,
   RENDER_EXTERNAL_URL,
   INTERNAL_API_KEY,
-  LOG_WEBHOOK_URL
+  LOG_WEBHOOK_URL,
+  HUMAN_AGENT_NUMBER
 } = process.env;
 
+/* =====================
+   TWILIO CLIENT
+===================== */
 const twilioClient = twilio(
   TWILIO_ACCOUNT_SID,
   TWILIO_AUTH_TOKEN
@@ -48,11 +52,18 @@ function detectLanguage(text = "") {
 
 function getVoice(lang) {
   if (lang === "hi") return { voice: "Polly.Aditi", language: "hi-IN" };
-  return { voice: "alice", language: "en-IN" }; // English + Gujarati
+  // Gujarati has no native Twilio TTS → English voice fallback
+  return { voice: "alice", language: "en-IN" };
+}
+
+function getGatherLang(lang) {
+  // Best recognition settings
+  if (lang === "hi") return "hi-IN";
+  return "en-IN"; // English + Gujarati
 }
 
 /* =====================
-   AI (GROQ)
+   GROQ AI
 ===================== */
 async function askGroq(userText) {
   try {
@@ -65,13 +76,15 @@ async function askGroq(userText) {
           {
             role: "system",
             content: `
-You are a Government Scheme Voice Assistant.
+You are an OFFICIAL Government Scheme Voice Assistant.
 
 Rules:
-- Detect whether the user is speaking Gujarati, Hindi, or English
+- Detect the user's language (Gujarati, Hindi, English)
 - Reply ONLY in the same language
-- Do not mix languages
-- Keep replies short and conversational
+- Keep answers under 60 words
+- If unsure, or user asks for human / officer / agent:
+Reply ONLY with this exact token:
+ESCALATE_TO_HUMAN
 `
           },
           { role: "user", content: userText }
@@ -85,14 +98,21 @@ Rules:
       }
     );
 
-    return response.data.choices[0].message.content;
+    return response.data.choices[0].message.content.trim();
   } catch {
-    return "Sorry, I am facing a technical issue right now.";
+    return "ESCALATE_TO_HUMAN";
   }
 }
 
 /* =====================
-   TWILIO ENTRY POINT
+   HEALTH CHECK
+===================== */
+app.get("/health", (_, res) => {
+  res.json({ status: "ok" });
+});
+
+/* =====================
+   TWILIO CALL START
 ===================== */
 app.post("/twilio/voice", (req, res) => {
   const twiml = new twilio.twiml.VoiceResponse();
@@ -105,12 +125,12 @@ app.post("/twilio/voice", (req, res) => {
     speechTimeout: "auto",
     enhanced: true,
     speechModel: "phone_call",
-    language: "en-IN" // ✅ ALWAYS ENGLISH LISTENING
+    language: "en-IN"
   });
 
   gather.say(
     { voice: "Polly.Aditi", language: "hi-IN" },
-    "नमस्ते। તમે ગુજરાતી, हिंदी या English में बात कर सकते हैं। आप क्या जानना चाहते हैं?"
+    "नमस्ते। તમે ગુજરાતી, हिंदी या English में बात कर सकते हैं। कृपया अपना सवाल पूछिए।"
   );
 
   res.type("text/xml").send(twiml.toString());
@@ -128,11 +148,27 @@ app.post("/twilio/gather", async (req, res) => {
     return res.type("text/xml").send(vr.toString());
   }
 
-  const lang = detectLanguage(userSpeech);
   const reply = await askGroq(userSpeech);
-  const voice = getVoice(lang);
 
-  /* ✅ OPTIONAL LOGGING */
+  /* ✅ AI → HUMAN ESCALATION */
+  if (reply === "ESCALATE_TO_HUMAN") {
+    const twiml = new twilio.twiml.VoiceResponse();
+
+    twiml.say(
+      { voice: "Polly.Aditi", language: "hi-IN" },
+      "मैं आपको हमारे अधिकारी से जोड़ रहा हूँ। कृपया प्रतीक्षा करें।"
+    );
+
+    twiml.dial(HUMAN_AGENT_NUMBER);
+
+    return res.type("text/xml").send(twiml.toString());
+  }
+
+  const lang = detectLanguage(userSpeech);
+  const voice = getVoice(lang);
+  const gatherLang = getGatherLang(lang);
+
+  /* ✅ LOG TO GOOGLE SHEET */
   if (LOG_WEBHOOK_URL) {
     fetch(LOG_WEBHOOK_URL, {
       method: "POST",
@@ -157,12 +193,13 @@ app.post("/twilio/gather", async (req, res) => {
     speechTimeout: "auto",
     enhanced: true,
     speechModel: "phone_call",
-    language: "en-IN" // ✅ KEEP IT FIXED
+    language: gatherLang
   });
 
   gather.say(voice, reply);
 
   twiml.redirect("/twilio/voice");
+
   res.type("text/xml").send(twiml.toString());
 });
 
