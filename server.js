@@ -28,23 +28,27 @@ const {
   TWILIO_AUTH_TOKEN,
   TWILIO_PHONE_NUMBER,
   RENDER_EXTERNAL_URL,
-  INTERNAL_API_KEY
+  INTERNAL_API_KEY,
+  LOG_WEBHOOK_URL
 } = process.env;
 
+/* =====================
+   TWILIO CLIENT
+===================== */
 const twilioClient = twilio(
   TWILIO_ACCOUNT_SID,
   TWILIO_AUTH_TOKEN
 );
 
 /* =====================
-   HEALTH
+   HEALTH CHECK
 ===================== */
 app.get("/health", (_, res) => {
   res.json({ status: "ok" });
 });
 
 /* =====================
-   AI (GROQ)
+   GROQ AI
 ===================== */
 async function askGroq(text) {
   try {
@@ -57,7 +61,7 @@ async function askGroq(text) {
           {
             role: "system",
             content:
-              "You are a Government Scheme Voice Assistant. Reply in the same language as the user. Keep replies short and conversational."
+              "You are a Government Scheme Voice Assistant. Reply in the same language as the user. Keep replies short, natural, and conversational."
           },
           { role: "user", content: text }
         ]
@@ -71,13 +75,14 @@ async function askGroq(text) {
     );
 
     return response.data.choices[0].message.content;
-  } catch {
-    return "माफ़ कीजिए, अभी मैं जवाब नहीं दे पा रहा हूँ।";
+  } catch (e) {
+    console.error("Groq error:", e.message);
+    return "माफ़ कीजिए, अभी मैं आपकी मदद नहीं कर पा रहा हूँ।";
   }
 }
 
 /* =====================
-   TWILIO ENTRY POINT
+   TWILIO CALL ENTRY
 ===================== */
 app.post("/twilio/voice", (req, res) => {
   const VoiceResponse = twilio.twiml.VoiceResponse;
@@ -102,15 +107,29 @@ app.post("/twilio/voice", (req, res) => {
 });
 
 /* =====================
-   CONTINUOUS CONVERSATION
+   TWILIO CONTINUOUS CONVERSATION
 ===================== */
 app.post("/twilio/gather", async (req, res) => {
   const userSpeech = req.body.SpeechResult || "";
+  const fromNumber = req.body.From || "Unknown";
+
   const reply = await askGroq(userSpeech);
 
-  const twiml = new twilio.twiml.VoiceResponse();
+  /* ✅ LOG TO GOOGLE SHEETS */
+  if (LOG_WEBHOOK_URL) {
+    axios
+      .post(LOG_WEBHOOK_URL, {
+        phone: fromNumber,
+        userSpeech: userSpeech,
+        aiReply: reply,
+        language: "auto"
+      })
+      .catch(() => {});
+  }
 
-  // ✅ Speak AND listen again
+  const VoiceResponse = twilio.twiml.VoiceResponse;
+  const twiml = new VoiceResponse();
+
   const gather = twiml.gather({
     input: "speech",
     action: "/twilio/gather",
@@ -126,7 +145,7 @@ app.post("/twilio/gather", async (req, res) => {
     reply
   );
 
-  // ✅ If user stays silent, restart listening
+  // If silence, restart flow
   twiml.redirect("/twilio/voice");
 
   res.type("text/xml").send(twiml.toString());
@@ -157,12 +176,13 @@ app.post("/start-call", async (req, res) => {
 
     res.json({ success: true, sid: call.sid });
   } catch (err) {
+    console.error("Twilio error:", err.message);
     res.status(500).json({ error: err.message });
   }
 });
 
 /* =====================
-   SERVER
+   START SERVER
 ===================== */
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => {
