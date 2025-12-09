@@ -52,7 +52,7 @@ function detectLanguage(text = "") {
 
 function getVoice(lang) {
   if (lang === "hi") return { voice: "Polly.Aditi", language: "hi-IN" };
-  return { voice: "alice", language: "en-IN" };
+  return { voice: "alice", language: "en-IN" }; // English + Gujarati fallback
 }
 
 /* =====================
@@ -75,7 +75,8 @@ Rules:
 - Reply ONLY in the user's language (${lang})
 - Gujarati / Hindi / English only
 - Max 60 words
-- If user wants a human or your knowledge is insufficient, REPLY ONLY WITH:
+- If user asks for human / officer / agent or question is out of scope,
+REPLY ONLY WITH THIS WORD:
 ESCALATE
 `
           },
@@ -144,18 +145,16 @@ app.post("/twilio/gather", async (req, res) => {
   const lang = detectLanguage(userSpeech);
   const aiReply = await askGroq(userSpeech, lang);
 
-  /* ✅ SILENT HUMAN TRANSFER – PERFECT */
+  /* ✅ PERFECT SILENT HUMAN TRANSFER */
   if (
     aiReply === "ESCALATE" ||
     /(human|agent|officer|operator|manager|complaint|help)/i.test(userSpeech)
   ) {
-    // 🔇 Flush audio buffers
-    twiml.pause({ length: 1 });
-
     const dial = twiml.dial({
       callerId: TWILIO_PHONE_NUMBER,
       timeout: 30,
-      answerOnBridge: true
+      answerOnBridge: true,
+      ringTone: "none" // ✅ suppress Twilio tones
     });
 
     dial.number(HUMAN_AGENT_NUMBER);
