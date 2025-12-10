@@ -1,72 +1,33 @@
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
-  <meta charset="UTF-8" />
-  <title>Government Voice Assistant</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-
-  <style>
-    body {
-      font-family: Arial, sans-serif;
-      background: #f4f6f8;
-      margin: 0;
-      padding: 0;
-    }
-    .container {
-      max-width: 500px;
-      margin: 40px auto;
-      background: white;
-      padding: 20px;
-      border-radius: 10px;
-      box-shadow: 0 0 10px rgba(0,0,0,0.1);
-      text-align: center;
-    }
-    h1 {
-      color: #0a66c2;
-    }
-    button {
-      background: #0a66c2;
-      color: white;
-      border: none;
-      padding: 15px 25px;
-      font-size: 16px;
-      border-radius: 8px;
-      cursor: pointer;
-      margin-top: 15px;
-    }
-    .box {
-      margin-top: 20px;
-      text-align: left;
-    }
-    textarea {
-      width: 100%;
-      height: 70px;
-      padding: 10px;
-      border-radius: 6px;
-      border: 1px solid #ccc;
-      resize: none;
-    }
-  </style>
+  <title>Call Assistant</title>
 </head>
-
 <body>
-  <div class="container">
-    <h1>🎙️ Government Voice Assistant</h1>
+  <h2>Start Call</h2>
 
-    <button id="startBtn">Start Talking</button>
+  <input id="phone" placeholder="+919XXXXXXXXX" />
+  <button onclick="call()">Call Now</button>
 
-    <div class="box">
-      <label>User Said:</label>
-      <textarea id="userSpeech" readonly></textarea>
-    </div>
+  <pre id="result"></pre>
 
-    <div class="box">
-      <label>Assistant Reply:</label>
-      <textarea id="aiReply" readonly></textarea>
-    </div>
-  </div>
+  <script>
+    async function call() {
+      const phone = document.getElementById("phone").value;
 
-  <!-- ✅ USE ONLY THIS -->
-  <script src="script.js"></script>
+      const res = await fetch("/start-call", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-api-key": "YOUR_INTERNAL_API_KEY"
+        },
+        body: JSON.stringify({ to: phone })
+      });
+
+      const data = await res.json();
+      document.getElementById("result").innerText =
+        JSON.stringify(data, null, 2);
+    }
+  </script>
 </body>
 </html>
