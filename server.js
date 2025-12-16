@@ -19,7 +19,7 @@ app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
 
 /* =====================
-   ENV
+   ENV VARIABLES
 ===================== */
 const {
   TWILIO_ACCOUNT_SID,
@@ -34,40 +34,61 @@ const {
 const client = twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN);
 
 /* =====================
-   LOAD FLOW (SAFE)
+   FLOW LOADER (SAFE)
 ===================== */
 const FLOW_DIR = path.join(__dirname, "flows");
+const flowCache = {};
 
-function loadFlow(lang = "gu") {
+function loadFlow(lang) {
   const filePath = path.join(FLOW_DIR, `${lang}.json`);
   return JSON.parse(fs.readFileSync(filePath, "utf8"));
 }
 
-const flowData = loadFlow("gu");
+function getFlow(lang) {
+  if (!flowCache[lang]) {
+    flowCache[lang] = loadFlow(lang);
+  }
+  return flowCache[lang];
+}
+
+/* =====================
+   LANGUAGE DETECTION
+===================== */
+function detectLanguage(text = "") {
+  if (/[\u0A80-\u0AFF]/.test(text)) return "gu"; // Gujarati
+  if (/[\u0900-\u097F]/.test(text)) return "hi"; // Hindi
+  return "en";
+}
+
+function getVoice(lang) {
+  if (lang === "hi") return { voice: "Polly.Aditi", language: "hi-IN" };
+  if (lang === "gu") return { voice: "Polly.Aditi", language: "gu-IN" };
+  return { voice: "alice", language: "en-IN" };
+}
 
 /* =====================
    CALL STATE MEMORY
 ===================== */
-const callState = new Map();
+const callState = new Map(); // CallSid → { step, lang, problem }
 
 /* =====================
-   HELPERS
+   FLOW HELPERS
 ===================== */
-function getStep(id) {
-  return flowData.flow.find(f => f.id === id);
+function getStep(flow, id) {
+  return flow.flow.find(s => s.id === id);
 }
 
 function detectNextStep(step, speech = "") {
   const s = speech.toLowerCase();
 
   if (step === "intro") {
-    if (s.includes("હા")) return "task_check";
-    if (s.includes("ના")) return "fallback";
+    if (s.includes("હા") || s.includes("हाँ") || s.includes("yes")) return "task_check";
+    if (s.includes("ના") || s.includes("नहीं") || s.includes("no")) return "fallback";
   }
 
   if (step === "task_check") {
-    if (s.includes("પૂર્ણ")) return "task_done";
-    if (s.includes("બાકી")) return "task_pending";
+    if (s.includes("પૂર્ણ") || s.includes("पूरा") || s.includes("complete")) return "task_done";
+    if (s.includes("બાકી") || s.includes("बाकी") || s.includes("pending")) return "task_pending";
   }
 
   if (step === "task_pending") {
@@ -78,34 +99,42 @@ function detectNextStep(step, speech = "") {
   return "fallback";
 }
 
-function sayAndGather(twiml, text) {
+function sayAndGather(twiml, text, lang) {
+  const voice = getVoice(lang);
+
   const gather = twiml.gather({
     input: "speech",
     action: "/twilio/gather",
     method: "POST",
     speechTimeout: "auto",
     bargeIn: true,
-    language: "gu-IN"
+    language: voice.language
   });
 
-  gather.say({ voice: "Polly.Aditi", language: "gu-IN" }, text);
+  gather.say(voice, text);
 }
 
 /* =====================
-   HEALTH
+   HEALTH CHECK
 ===================== */
 app.get("/health", (_, res) => res.json({ status: "ok" }));
 
 /* =====================
-   CALL ENTRY
+   CALL ENTRY (INBOUND / OUTBOUND)
 ===================== */
 app.post("/twilio/voice", (req, res) => {
   const twiml = new twilio.twiml.VoiceResponse();
   const callSid = req.body.CallSid;
 
-  callState.set(callSid, { step: "intro", problem: "" });
+  callState.set(callSid, {
+    step: "intro",
+    lang: "gu", // default
+    problem: ""
+  });
 
-  sayAndGather(twiml, getStep("intro").prompt);
+  const flow = getFlow("gu");
+  sayAndGather(twiml, getStep(flow, "intro").prompt, "gu");
+
   res.type("text/xml").send(twiml.toString());
 });
 
@@ -119,10 +148,21 @@ app.post("/twilio/gather", async (req, res) => {
   const from = req.body.From;
   const speech = req.body.SpeechResult || "";
 
-  const state = callState.get(callSid) || { step: "intro", problem: "" };
-  const nextStepId = detectNextStep(state.step, speech);
-  const nextStep = getStep(nextStepId);
+  const state = callState.get(callSid) || {
+    step: "intro",
+    lang: "gu",
+    problem: ""
+  };
 
+  // Detect language from speech
+  const lang = detectLanguage(speech);
+  state.lang = lang;
+
+  const flow = getFlow(lang);
+  const nextStepId = detectNextStep(state.step, speech);
+  const nextStep = getStep(flow, nextStepId);
+
+  // Save problem description
   if (state.step === "task_pending" && speech.length > 10) {
     state.problem = speech;
   }
@@ -130,13 +170,16 @@ app.post("/twilio/gather", async (req, res) => {
   state.step = nextStepId;
   callState.set(callSid, state);
 
-  /* LOG STRUCTURED DATA */
+  /* =====================
+     GOOGLE SHEET LOG
+  ===================== */
   if (LOG_WEBHOOK_URL) {
     fetch(LOG_WEBHOOK_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         phone: from,
+        language: lang,
         step: nextStepId,
         speech,
         problem: state.problem,
@@ -145,7 +188,9 @@ app.post("/twilio/gather", async (req, res) => {
     }).catch(() => {});
   }
 
-  /* HUMAN ESCALATION */
+  /* =====================
+     HUMAN ESCALATION
+  ===================== */
   if (/agent|human|officer|complaint/i.test(speech)) {
     const dial = twiml.dial({
       callerId: TWILIO_PHONE_NUMBER,
@@ -155,11 +200,14 @@ app.post("/twilio/gather", async (req, res) => {
     return res.type("text/xml").send(twiml.toString());
   }
 
-  if (!nextStep.options.length) {
-    twiml.say({ voice: "Polly.Aditi", language: "gu-IN" }, nextStep.prompt);
+  /* =====================
+     FINAL OR CONTINUE
+  ===================== */
+  if (!nextStep || !nextStep.options.length) {
+    twiml.say(getVoice(lang), nextStep?.prompt || "Thank you.");
     twiml.hangup();
   } else {
-    sayAndGather(twiml, nextStep.prompt);
+    sayAndGather(twiml, nextStep.prompt, lang);
   }
 
   res.type("text/xml").send(twiml.toString());
@@ -191,5 +239,5 @@ app.post("/start-call", async (req, res) => {
 ===================== */
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, () =>
-  console.log(`✅ Flow-based Voice Agent running on ${PORT}`)
+  console.log(`✅ Multi-language Voice Agent running on ${PORT}`)
 );
