@@ -55,8 +55,8 @@ function getFlow(lang) {
    LANGUAGE DETECTION
 ===================== */
 function detectLanguage(text = "") {
-  if (/[\u0A80-\u0AFF]/.test(text)) return "gu"; // Gujarati
-  if (/[\u0900-\u097F]/.test(text)) return "hi"; // Hindi
+  if (/[\u0A80-\u0AFF]/.test(text)) return "gu";
+  if (/[\u0900-\u097F]/.test(text)) return "hi";
   return "en";
 }
 
@@ -115,12 +115,24 @@ function sayAndGather(twiml, text, lang) {
 }
 
 /* =====================
+   HUMAN TRANSFER (SILENT)
+===================== */
+function transferToHuman(twiml) {
+  const dial = twiml.dial({
+    callerId: TWILIO_PHONE_NUMBER,
+    answerOnBridge: true,
+    ringTone: "none"
+  });
+  dial.number(HUMAN_AGENT_NUMBER);
+}
+
+/* =====================
    HEALTH CHECK
 ===================== */
 app.get("/health", (_, res) => res.json({ status: "ok" }));
 
 /* =====================
-   CALL ENTRY (INBOUND / OUTBOUND)
+   CALL ENTRY
 ===================== */
 app.post("/twilio/voice", (req, res) => {
   const twiml = new twilio.twiml.VoiceResponse();
@@ -128,7 +140,7 @@ app.post("/twilio/voice", (req, res) => {
 
   callState.set(callSid, {
     step: "intro",
-    lang: "gu", // default
+    lang: "gu",
     problem: ""
   });
 
@@ -154,7 +166,7 @@ app.post("/twilio/gather", async (req, res) => {
     problem: ""
   };
 
-  // Detect language from speech
+  /* Detect language */
   const lang = detectLanguage(speech);
   state.lang = lang;
 
@@ -162,7 +174,7 @@ app.post("/twilio/gather", async (req, res) => {
   const nextStepId = detectNextStep(state.step, speech);
   const nextStep = getStep(flow, nextStepId);
 
-  // Save problem description
+  /* Save problem text */
   if (state.step === "task_pending" && speech.length > 10) {
     state.problem = speech;
   }
@@ -171,7 +183,7 @@ app.post("/twilio/gather", async (req, res) => {
   callState.set(callSid, state);
 
   /* =====================
-     GOOGLE SHEET LOG
+     STRUCTURED LOGGING
   ===================== */
   if (LOG_WEBHOOK_URL) {
     fetch(LOG_WEBHOOK_URL, {
@@ -189,19 +201,23 @@ app.post("/twilio/gather", async (req, res) => {
   }
 
   /* =====================
-     HUMAN ESCALATION
+     FALLBACK → HUMAN
   ===================== */
-  if (/agent|human|officer|complaint/i.test(speech)) {
-    const dial = twiml.dial({
-      callerId: TWILIO_PHONE_NUMBER,
-      answerOnBridge: true
-    });
-    dial.number(HUMAN_AGENT_NUMBER);
+  if (nextStepId === "fallback") {
+    transferToHuman(twiml);
     return res.type("text/xml").send(twiml.toString());
   }
 
   /* =====================
-     FINAL OR CONTINUE
+     MANUAL HUMAN REQUEST
+  ===================== */
+  if (/agent|human|officer|complaint/i.test(speech)) {
+    transferToHuman(twiml);
+    return res.type("text/xml").send(twiml.toString());
+  }
+
+  /* =====================
+     CONTINUE OR END
   ===================== */
   if (!nextStep || !nextStep.options.length) {
     twiml.say(getVoice(lang), nextStep?.prompt || "Thank you.");
@@ -239,5 +255,5 @@ app.post("/start-call", async (req, res) => {
 ===================== */
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, () =>
-  console.log(`✅ Multi-language Voice Agent running on ${PORT}`)
+  console.log(`✅ Voice Agent running (fallback → human) on ${PORT}`)
 );
