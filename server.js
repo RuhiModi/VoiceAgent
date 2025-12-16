@@ -35,7 +35,7 @@ app.get("/health", (req, res) => {
 });
 
 /* =====================
-   SAFE HUMAN TRANSFER
+   HUMAN TRANSFER
 ===================== */
 function humanTransferTwiml() {
   if (!HUMAN_AGENT_NUMBER) {
@@ -48,8 +48,8 @@ function humanTransferTwiml() {
 
   return `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-  <Say voice="Polly.Amit" language="hi-IN">
-    कृपया प्रतीक्षा करें। हम आपको अधिकारी से जोड़ रहे हैं।
+  <Say voice="alice">
+    Please wait while I connect you to a human agent.
   </Say>
   <Dial callerId="${TWILIO_PHONE_NUMBER}">
     <Number>${HUMAN_AGENT_NUMBER}</Number>
@@ -64,14 +64,14 @@ app.post("/twilio/voice", (req, res) => {
   const twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Gather numDigits="1" timeout="5" action="${BASE_URL}/twilio/language" method="POST">
-    <Say voice="Polly.Amit" language="hi-IN">
-      नमस्ते। भाषा चुनें।
-      हिंदी के लिए 1 दबाएँ।
-      ગુજરાતી માટે 2 દબાવો.
-      English ke liye 3 dabaye.
+    <Say voice="alice">
+      Hello. Please choose your language.
+      Press 1 for Hindi.
+      Press 2 for Gujarati.
+      Press 3 for English.
     </Say>
   </Gather>
-  <Say>We did not receive any input.</Say>
+  <Say voice="alice">No input received.</Say>
   <Hangup/>
 </Response>`;
   res.type("text/xml").send(twiml);
@@ -83,72 +83,44 @@ app.post("/twilio/voice", (req, res) => {
 app.post("/twilio/language", (req, res) => {
   const digit = req.body.Digits;
 
-  if (digit === "1") return res.type("text/xml").send(taskCheckHindi());
-  if (digit === "2") return res.type("text/xml").send(taskCheckGujarati());
-  if (digit === "3") return res.type("text/xml").send(taskCheckEnglish());
+  if (digit === "1") return res.type("text/xml").send(taskCheck("hi"));
+  if (digit === "2") return res.type("text/xml").send(taskCheck("gu"));
+  if (digit === "3") return res.type("text/xml").send(taskCheck("en"));
 
   return res.type("text/xml").send(humanTransferTwiml());
 });
 
 /* =====================
-   STEP 3 — TASK CHECK (HI)
+   TASK CHECK
 ===================== */
-function taskCheckHindi() {
+function taskCheck(lang) {
+  let message;
+
+  if (lang === "hi") {
+    message = "Has your work been completed? Press 1 for yes. Press 2 for no.";
+  } else if (lang === "gu") {
+    message = "Has your work been completed? Press 1 for yes. Press 2 for no.";
+  } else {
+    message = "Has your work been completed? Press 1 for yes. Press 2 for no.";
+  }
+
   return `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-  <Gather numDigits="1" timeout="5" action="${BASE_URL}/twilio/result/hi" method="POST">
-    <Say voice="Polly.Amit" language="hi-IN">
-      क्या आपका काम पूरा हो गया है?
-      हाँ के लिए 1 दबाएँ।
-      नहीं के लिए 2 दबाएँ।
-    </Say>
+  <Gather numDigits="1" timeout="5" action="${BASE_URL}/twilio/result/${lang}" method="POST">
+    <Say voice="alice">${message}</Say>
   </Gather>
   <Hangup/>
 </Response>`;
 }
 
 /* =====================
-   STEP 3 — TASK CHECK (GU)
-===================== */
-function taskCheckGujarati() {
-  return `<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-  <Gather numDigits="1" timeout="5" action="${BASE_URL}/twilio/result/gu" method="POST">
-    <Say voice="Polly.Amit" language="hi-IN">
-      શું આપનું કામ પૂર્ણ થયું છે?
-      હા માટે 1 દબાવો.
-      ના માટે 2 દબાવો.
-    </Say>
-  </Gather>
-  <Hangup/>
-</Response>`;
-}
-
-/* =====================
-   STEP 3 — TASK CHECK (EN)
-===================== */
-function taskCheckEnglish() {
-  return `<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-  <Gather numDigits="1" timeout="5" action="${BASE_URL}/twilio/result/en" method="POST">
-    <Say voice="alice">
-      Has your work been completed?
-      Press 1 for yes.
-      Press 2 for no.
-    </Say>
-  </Gather>
-  <Hangup/>
-</Response>`;
-}
-
-/* =====================
-   STEP 4 — RESULT HANDLER
+   RESULT HANDLER
 ===================== */
 app.post("/twilio/result/:lang", (req, res) => {
   const digit = req.body.Digits;
 
   if (digit === "1") {
-    return res.type("text/xml").send(successMessage(req.params.lang));
+    return res.type("text/xml").send(successMessage());
   }
 
   if (digit === "2") {
@@ -161,27 +133,7 @@ app.post("/twilio/result/:lang", (req, res) => {
 /* =====================
    SUCCESS MESSAGE
 ===================== */
-function successMessage(lang) {
-  if (lang === "hi") {
-    return `<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-  <Say voice="Polly.Amit" language="hi-IN">
-    धन्यवाद। आपकी जानकारी दर्ज कर ली गई है।
-  </Say>
-  <Hangup/>
-</Response>`;
-  }
-
-  if (lang === "gu") {
-    return `<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-  <Say voice="Polly.Amit" language="hi-IN">
-    આભાર. તમારી માહિતી નોંધાઈ ગઈ છે.
-  </Say>
-  <Hangup/>
-</Response>`;
-  }
-
+function successMessage() {
   return `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Say voice="alice">
@@ -197,10 +149,6 @@ function successMessage(lang) {
 app.post("/start-call", async (req, res) => {
   if (req.headers["x-api-key"] !== INTERNAL_API_KEY) {
     return res.status(401).json({ error: "Unauthorized" });
-  }
-
-  if (!req.body.to) {
-    return res.status(400).json({ error: "Missing 'to' number" });
   }
 
   try {
@@ -222,5 +170,5 @@ app.post("/start-call", async (req, res) => {
 ===================== */
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => {
-  console.log(`✅ Voice Agent running safely on ${PORT}`);
+  console.log(`✅ Voice Agent running (DTMF, trial-safe) on ${PORT}`);
 });
