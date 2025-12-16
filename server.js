@@ -43,13 +43,6 @@ function detectLanguage(text = "") {
   return "en";
 }
 
-function voiceTag(lang) {
-  if (lang === "gu" || lang === "hi") {
-    return `voice="Polly.Amit" language="hi-IN"`;
-  }
-  return `voice="alice" language="en-IN"`;
-}
-
 /* =====================
    HUMAN TRANSFER
 ===================== */
@@ -64,7 +57,7 @@ function humanTransferTwiml() {
 
   return `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-  <Say voice="Polly.Amit" language="hi-IN">
+  <Say voice="alice" language="hi-IN">
     कृपया प्रतीक्षा करें। मैं आपको अधिकारी से जोड़ रहा हूँ।
   </Say>
   <Dial callerId="${TWILIO_PHONE_NUMBER}">
@@ -79,7 +72,7 @@ function humanTransferTwiml() {
 app.post("/twilio/voice", (req, res) => {
   const twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-  <Say voice="Polly.Amit" language="hi-IN">
+  <Say voice="alice" language="hi-IN">
     नमस्ते। मैं आपकी सहायता के लिए कॉल कर रहा हूँ।
     क्या अभी बात करने का समय है?
   </Say>
@@ -101,28 +94,14 @@ app.post("/twilio/voice", (req, res) => {
    STEP 2 — USER RESPONSE
 ===================== */
 app.post("/twilio/gather", (req, res) => {
-  const speechRaw = req.body.SpeechResult || "";
-  const speech = speechRaw.trim().toLowerCase();
+  const speech = (req.body.SpeechResult || "").trim().toLowerCase();
 
-  // SILENCE OR FAILURE → HUMAN
+  // Silence → human
   if (!speech || speech.length < 2) {
     return res.type("text/xml").send(humanTransferTwiml());
   }
 
   const lang = detectLanguage(speech);
-  const voice = voiceTag(lang);
-
-  // KEYWORDS → HUMAN
-  if (
-    speech.includes("agent") ||
-    speech.includes("officer") ||
-    speech.includes("help") ||
-    speech.includes("मानव") ||
-    speech.includes("अधिकारी") ||
-    speech.includes("અધિકારી")
-  ) {
-    return res.type("text/xml").send(humanTransferTwiml());
-  }
 
   let reply;
   if (lang === "gu") {
@@ -135,8 +114,10 @@ app.post("/twilio/gather", (req, res) => {
 
   const twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-  <Say ${voice}>${reply}</Say>
-  <Say ${voice}>धन्यवाद। हम जल्द ही आपसे संपर्क करेंगे।</Say>
+  <Say voice="alice" language="hi-IN">${reply}</Say>
+  <Say voice="alice" language="hi-IN">
+    धन्यवाद। हम जल्द ही आपसे संपर्क करेंगे।
+  </Say>
   <Hangup/>
 </Response>`;
 
