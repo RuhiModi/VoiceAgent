@@ -51,7 +51,7 @@ function voiceTag(lang) {
 }
 
 /* =====================
-   HUMAN TRANSFER (SAFE)
+   HUMAN TRANSFER
 ===================== */
 function humanTransferTwiml() {
   if (!HUMAN_AGENT_NUMBER) {
@@ -90,13 +90,8 @@ app.post("/twilio/voice", (req, res) => {
     speechTimeout="auto"
     action="${BASE_URL}/twilio/gather"
     method="POST"
-    language="hi-IN" />
-
-  <!-- SAFETY: if Gather fails -->
-  <Say voice="Polly.Amit" language="hi-IN">
-    कोई उत्तर नहीं मिला।
-  </Say>
-  <Hangup/>
+    language="hi-IN"
+    actionOnEmptyResult="true" />
 </Response>`;
 
   res.type("text/xml").status(200).send(twiml);
@@ -109,7 +104,7 @@ app.post("/twilio/gather", (req, res) => {
   const speechRaw = req.body.SpeechResult || "";
   const speech = speechRaw.trim().toLowerCase();
 
-  // 🔒 ABSOLUTE SAFETY — silence or empty
+  // SILENCE OR FAILURE → HUMAN
   if (!speech || speech.length < 2) {
     return res.type("text/xml").send(humanTransferTwiml());
   }
@@ -117,7 +112,7 @@ app.post("/twilio/gather", (req, res) => {
   const lang = detectLanguage(speech);
   const voice = voiceTag(lang);
 
-  // 🔁 Keywords → human
+  // KEYWORDS → HUMAN
   if (
     speech.includes("agent") ||
     speech.includes("officer") ||
@@ -129,7 +124,6 @@ app.post("/twilio/gather", (req, res) => {
     return res.type("text/xml").send(humanTransferTwiml());
   }
 
-  // 🟢 Normal AI-like reply
   let reply;
   if (lang === "gu") {
     reply = "સમજાયું. તમારી માહિતી નોંધવામાં આવી છે.";
@@ -141,12 +135,8 @@ app.post("/twilio/gather", (req, res) => {
 
   const twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-  <Say ${voice}>
-    ${reply}
-  </Say>
-  <Say ${voice}>
-    धन्यवाद। हम जल्द ही आपसे संपर्क करेंगे।
-  </Say>
+  <Say ${voice}>${reply}</Say>
+  <Say ${voice}>धन्यवाद। हम जल्द ही आपसे संपर्क करेंगे।</Say>
   <Hangup/>
 </Response>`;
 
@@ -159,10 +149,6 @@ app.post("/twilio/gather", (req, res) => {
 app.post("/start-call", async (req, res) => {
   if (req.headers["x-api-key"] !== INTERNAL_API_KEY) {
     return res.status(401).json({ error: "Unauthorized" });
-  }
-
-  if (!req.body.to) {
-    return res.status(400).json({ error: "Missing 'to' number" });
   }
 
   try {
