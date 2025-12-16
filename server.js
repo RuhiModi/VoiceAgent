@@ -55,14 +55,27 @@ function getFlow(lang) {
    LANGUAGE DETECTION
 ===================== */
 function detectLanguage(text = "") {
-  if (/[\u0A80-\u0AFF]/.test(text)) return "gu";
-  if (/[\u0900-\u097F]/.test(text)) return "hi";
+  if (/[\u0A80-\u0AFF]/.test(text)) return "gu"; // Gujarati
+  if (/[\u0900-\u097F]/.test(text)) return "hi"; // Hindi
   return "en";
 }
 
+/* =====================
+   VOICE SELECTION (FIXED)
+   Gujarati → Hindi (Male)
+===================== */
 function getVoice(lang) {
-  if (lang === "hi") return { voice: "Polly.Aditi", language: "hi-IN" };
-  if (lang === "gu") return { voice: "Polly.Aditi", language: "gu-IN" };
+  // Gujarati NOT supported → Speak Hindi (Male)
+  if (lang === "gu") {
+    return { voice: "Polly.Amit", language: "hi-IN" };
+  }
+
+  // Hindi (Male)
+  if (lang === "hi") {
+    return { voice: "Polly.Amit", language: "hi-IN" };
+  }
+
+  // English
   return { voice: "alice", language: "en-IN" };
 }
 
@@ -145,6 +158,8 @@ app.post("/twilio/voice", (req, res) => {
   });
 
   const flow = getFlow("gu");
+
+  // Gujarati content → Hindi voice (male)
   sayAndGather(twiml, getStep(flow, "intro").prompt, "gu");
 
   res.type("text/xml").send(twiml.toString());
@@ -166,7 +181,6 @@ app.post("/twilio/gather", async (req, res) => {
     problem: ""
   };
 
-  /* Detect language */
   const lang = detectLanguage(speech);
   state.lang = lang;
 
@@ -174,7 +188,6 @@ app.post("/twilio/gather", async (req, res) => {
   const nextStepId = detectNextStep(state.step, speech);
   const nextStep = getStep(flow, nextStepId);
 
-  /* Save problem text */
   if (state.step === "task_pending" && speech.length > 10) {
     state.problem = speech;
   }
@@ -182,9 +195,7 @@ app.post("/twilio/gather", async (req, res) => {
   state.step = nextStepId;
   callState.set(callSid, state);
 
-  /* =====================
-     STRUCTURED LOGGING
-  ===================== */
+  /* LOG STRUCTURED DATA */
   if (LOG_WEBHOOK_URL) {
     fetch(LOG_WEBHOOK_URL, {
       method: "POST",
@@ -200,27 +211,21 @@ app.post("/twilio/gather", async (req, res) => {
     }).catch(() => {});
   }
 
-  /* =====================
-     FALLBACK → HUMAN
-  ===================== */
+  /* FALLBACK → HUMAN */
   if (nextStepId === "fallback") {
     transferToHuman(twiml);
     return res.type("text/xml").send(twiml.toString());
   }
 
-  /* =====================
-     MANUAL HUMAN REQUEST
-  ===================== */
+  /* MANUAL HUMAN REQUEST */
   if (/agent|human|officer|complaint/i.test(speech)) {
     transferToHuman(twiml);
     return res.type("text/xml").send(twiml.toString());
   }
 
-  /* =====================
-     CONTINUE OR END
-  ===================== */
+  /* CONTINUE OR END */
   if (!nextStep || !nextStep.options.length) {
-    twiml.say(getVoice(lang), nextStep?.prompt || "Thank you.");
+    twiml.say(getVoice(lang), nextStep?.prompt || "धन्यवाद।");
     twiml.hangup();
   } else {
     sayAndGather(twiml, nextStep.prompt, lang);
@@ -255,5 +260,5 @@ app.post("/start-call", async (req, res) => {
 ===================== */
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, () =>
-  console.log(`✅ Voice Agent running (fallback → human) on ${PORT}`)
+  console.log(`✅ Voice Agent running (Gujarati → Hindi male voice) on ${PORT}`)
 );
