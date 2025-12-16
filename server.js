@@ -35,16 +35,7 @@ app.get("/health", (req, res) => {
 });
 
 /* =====================
-   LANGUAGE DETECTION
-===================== */
-function detectLanguage(text = "") {
-  if (/[\u0A80-\u0AFF]/.test(text)) return "gu";
-  if (/[\u0900-\u097F]/.test(text)) return "hi";
-  return "en";
-}
-
-/* =====================
-   HUMAN TRANSFER
+   SAFE HUMAN TRANSFER
 ===================== */
 function humanTransferTwiml() {
   if (!HUMAN_AGENT_NUMBER) {
@@ -57,8 +48,8 @@ function humanTransferTwiml() {
 
   return `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-  <Say voice="alice" language="hi-IN">
-    कृपया प्रतीक्षा करें। मैं आपको अधिकारी से जोड़ रहा हूँ।
+  <Say voice="Polly.Amit" language="hi-IN">
+    कृपया प्रतीक्षा करें। हम आपको अधिकारी से जोड़ रहे हैं।
   </Say>
   <Dial callerId="${TWILIO_PHONE_NUMBER}">
     <Number>${HUMAN_AGENT_NUMBER}</Number>
@@ -67,62 +58,138 @@ function humanTransferTwiml() {
 }
 
 /* =====================
-   STEP 1 — CALL ENTRY
+   STEP 1 — LANGUAGE MENU
 ===================== */
 app.post("/twilio/voice", (req, res) => {
   const twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-  <Say voice="alice" language="hi-IN">
-    नमस्ते। मैं आपकी सहायता के लिए कॉल कर रहा हूँ।
-    क्या अभी बात करने का समय है?
-  </Say>
-
-  <Gather
-    input="speech"
-    timeout="5"
-    speechTimeout="auto"
-    action="${BASE_URL}/twilio/gather"
-    method="POST"
-    language="hi-IN"
-    actionOnEmptyResult="true" />
+  <Gather numDigits="1" timeout="5" action="${BASE_URL}/twilio/language" method="POST">
+    <Say voice="Polly.Amit" language="hi-IN">
+      नमस्ते। भाषा चुनें।
+      हिंदी के लिए 1 दबाएँ।
+      ગુજરાતી માટે 2 દબાવો.
+      English ke liye 3 dabaye.
+    </Say>
+  </Gather>
+  <Say>We did not receive any input.</Say>
+  <Hangup/>
 </Response>`;
-
-  res.type("text/xml").status(200).send(twiml);
+  res.type("text/xml").send(twiml);
 });
 
 /* =====================
-   STEP 2 — USER RESPONSE
+   STEP 2 — LANGUAGE ROUTER
 ===================== */
-app.post("/twilio/gather", (req, res) => {
-  const speech = (req.body.SpeechResult || "").trim().toLowerCase();
+app.post("/twilio/language", (req, res) => {
+  const digit = req.body.Digits;
 
-  // Silence → human
-  if (!speech || speech.length < 2) {
+  if (digit === "1") return res.type("text/xml").send(taskCheckHindi());
+  if (digit === "2") return res.type("text/xml").send(taskCheckGujarati());
+  if (digit === "3") return res.type("text/xml").send(taskCheckEnglish());
+
+  return res.type("text/xml").send(humanTransferTwiml());
+});
+
+/* =====================
+   STEP 3 — TASK CHECK (HI)
+===================== */
+function taskCheckHindi() {
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Gather numDigits="1" timeout="5" action="${BASE_URL}/twilio/result/hi" method="POST">
+    <Say voice="Polly.Amit" language="hi-IN">
+      क्या आपका काम पूरा हो गया है?
+      हाँ के लिए 1 दबाएँ।
+      नहीं के लिए 2 दबाएँ।
+    </Say>
+  </Gather>
+  <Hangup/>
+</Response>`;
+}
+
+/* =====================
+   STEP 3 — TASK CHECK (GU)
+===================== */
+function taskCheckGujarati() {
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Gather numDigits="1" timeout="5" action="${BASE_URL}/twilio/result/gu" method="POST">
+    <Say voice="Polly.Amit" language="hi-IN">
+      શું આપનું કામ પૂર્ણ થયું છે?
+      હા માટે 1 દબાવો.
+      ના માટે 2 દબાવો.
+    </Say>
+  </Gather>
+  <Hangup/>
+</Response>`;
+}
+
+/* =====================
+   STEP 3 — TASK CHECK (EN)
+===================== */
+function taskCheckEnglish() {
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Gather numDigits="1" timeout="5" action="${BASE_URL}/twilio/result/en" method="POST">
+    <Say voice="alice">
+      Has your work been completed?
+      Press 1 for yes.
+      Press 2 for no.
+    </Say>
+  </Gather>
+  <Hangup/>
+</Response>`;
+}
+
+/* =====================
+   STEP 4 — RESULT HANDLER
+===================== */
+app.post("/twilio/result/:lang", (req, res) => {
+  const digit = req.body.Digits;
+
+  if (digit === "1") {
+    return res.type("text/xml").send(successMessage(req.params.lang));
+  }
+
+  if (digit === "2") {
     return res.type("text/xml").send(humanTransferTwiml());
   }
 
-  const lang = detectLanguage(speech);
+  return res.type("text/xml").send(humanTransferTwiml());
+});
 
-  let reply;
-  if (lang === "gu") {
-    reply = "સમજાયું. તમારી માહિતી નોંધવામાં આવી છે.";
-  } else if (lang === "hi") {
-    reply = "समझ गया। आपकी जानकारी दर्ज कर ली गई है।";
-  } else {
-    reply = "Understood. Your information has been recorded.";
-  }
-
-  const twiml = `<?xml version="1.0" encoding="UTF-8"?>
+/* =====================
+   SUCCESS MESSAGE
+===================== */
+function successMessage(lang) {
+  if (lang === "hi") {
+    return `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-  <Say voice="alice" language="hi-IN">${reply}</Say>
-  <Say voice="alice" language="hi-IN">
-    धन्यवाद। हम जल्द ही आपसे संपर्क करेंगे।
+  <Say voice="Polly.Amit" language="hi-IN">
+    धन्यवाद। आपकी जानकारी दर्ज कर ली गई है।
   </Say>
   <Hangup/>
 </Response>`;
+  }
 
-  res.type("text/xml").status(200).send(twiml);
-});
+  if (lang === "gu") {
+    return `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Say voice="Polly.Amit" language="hi-IN">
+    આભાર. તમારી માહિતી નોંધાઈ ગઈ છે.
+  </Say>
+  <Hangup/>
+</Response>`;
+  }
+
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Say voice="alice">
+    Thank you. Your information has been recorded.
+  </Say>
+  <Hangup/>
+</Response>`;
+}
 
 /* =====================
    START OUTBOUND CALL
@@ -130,6 +197,10 @@ app.post("/twilio/gather", (req, res) => {
 app.post("/start-call", async (req, res) => {
   if (req.headers["x-api-key"] !== INTERNAL_API_KEY) {
     return res.status(401).json({ error: "Unauthorized" });
+  }
+
+  if (!req.body.to) {
+    return res.status(400).json({ error: "Missing 'to' number" });
   }
 
   try {
@@ -151,5 +222,5 @@ app.post("/start-call", async (req, res) => {
 ===================== */
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => {
-  console.log(`✅ AI Voice Agent running safely on ${PORT}`);
+  console.log(`✅ Voice Agent running safely on ${PORT}`);
 });
