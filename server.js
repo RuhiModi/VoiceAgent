@@ -26,12 +26,10 @@ const {
   TWILIO_AUTH_TOKEN,
   TWILIO_PHONE_NUMBER,
   HUMAN_AGENT_NUMBER,
-  LOG_WEBHOOK_URL,
   INTERNAL_API_KEY,
   RENDER_EXTERNAL_URL
 } = process.env;
 
-// 🔴 SAFETY: ensure base URL exists
 if (!RENDER_EXTERNAL_URL) {
   console.error("❌ RENDER_EXTERNAL_URL is missing");
   process.exit(1);
@@ -41,7 +39,7 @@ const BASE_URL = RENDER_EXTERNAL_URL.replace(/\/$/, "");
 const client = twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN);
 
 /* =====================
-   HEALTH CHECK (NEW)
+   HEALTH CHECK
 ===================== */
 app.get("/health", (req, res) => {
   res.status(200).json({
@@ -52,30 +50,34 @@ app.get("/health", (req, res) => {
 });
 
 /* =====================
-   FLOW LOADER
+   FLOW LOADER (SAFE)
 ===================== */
 const FLOW_DIR = path.join(__dirname, "flows");
 const flowCache = {};
 
 function getFlow(lang) {
-  if (!flowCache[lang]) {
-    flowCache[lang] = JSON.parse(
-      fs.readFileSync(path.join(FLOW_DIR, `${lang}.json`), "utf8")
-    );
+  try {
+    if (!flowCache[lang]) {
+      const filePath = path.join(FLOW_DIR, `${lang}.json`);
+      flowCache[lang] = JSON.parse(fs.readFileSync(filePath, "utf8"));
+    }
+    return flowCache[lang];
+  } catch (err) {
+    console.error("❌ Flow load error:", err.message);
+    return { flow: [] };
   }
-  return flowCache[lang];
 }
 
 /* =====================
    LANGUAGE + VOICE
 ===================== */
 function detectLanguage(text = "") {
-  if (/[\u0A80-\u0AFF]/.test(text)) return "gu";
-  if (/[\u0900-\u097F]/.test(text)) return "hi";
+  if (/[\u0A80-\u0AFF]/.test(text)) return "gu"; // Gujarati
+  if (/[\u0900-\u097F]/.test(text)) return "hi"; // Hindi
   return "en";
 }
 
-// Gujarati → Hindi (male), Hindi → Hindi (male), English → English
+// Gujarati → Hindi (Male), Hindi → Hindi (Male), English → English
 function getVoice(lang) {
   if (lang === "gu" || lang === "hi") {
     return { voice: "Polly.Amit", language: "hi-IN" };
@@ -89,10 +91,18 @@ function getVoice(lang) {
 const callState = new Map();
 
 /* =====================
-   FLOW LOGIC
+   FLOW HELPERS (SAFE)
 ===================== */
-function getStep(flow, id) {
-  return flow.flow.find(s => s.id === id);
+function getSafeStep(flow, id) {
+  const step = flow?.flow?.find(s => s.id === id);
+  if (!step || !step.prompt || !step.prompt.trim()) {
+    return {
+      id: "fallback",
+      prompt: "कृपया प्रतीक्षा करें, हम आपको एक अधिकारी से जोड़ रहे हैं।",
+      options: []
+    };
+  }
+  return step;
 }
 
 function detectNextStep(step, speech = "") {
@@ -116,10 +126,15 @@ function detectNextStep(step, speech = "") {
 }
 
 /* =====================
-   TWILIO HELPERS
+   TWILIO HELPERS (SAFE)
 ===================== */
 function sayPrompt(twiml, text, lang) {
-  twiml.say(getVoice(lang), text);
+  const safeText =
+    typeof text === "string" && text.trim().length > 0
+      ? text
+      : "कृपया थोड़ी देर प्रतीक्षा करें।";
+
+  twiml.say(getVoice(lang), safeText);
 }
 
 function gatherSpeech(twiml, lang) {
@@ -137,7 +152,7 @@ function transferToHuman(twiml) {
   if (!HUMAN_AGENT_NUMBER) {
     twiml.say(
       { voice: "alice", language: "en-IN" },
-      "All agents are busy. We will call you back."
+      "All our agents are busy. We will call you back."
     );
     twiml.hangup();
     return;
@@ -152,7 +167,7 @@ function transferToHuman(twiml) {
 }
 
 /* =====================
-   ENTRY POINT
+   CALL ENTRY
 ===================== */
 app.post("/twilio/voice", (req, res) => {
   const twiml = new twilio.twiml.VoiceResponse();
@@ -165,9 +180,10 @@ app.post("/twilio/voice", (req, res) => {
   });
 
   const flow = getFlow("gu");
+  const introStep = getSafeStep(flow, "intro");
 
-  // ✅ SPEAK FIRST (very important)
-  sayPrompt(twiml, getStep(flow, "intro").prompt, "gu");
+  // ✅ SPEAK FIRST (critical)
+  sayPrompt(twiml, introStep.prompt, "gu");
   gatherSpeech(twiml, "gu");
 
   res.type("text/xml").send(twiml.toString());
@@ -183,7 +199,6 @@ app.post("/twilio/gather", (req, res) => {
 
   const state = callState.get(callSid);
   if (!state) {
-    // safety fallback
     transferToHuman(twiml);
     return res.type("text/xml").send(twiml.toString());
   }
@@ -193,7 +208,7 @@ app.post("/twilio/gather", (req, res) => {
 
   const flow = getFlow(lang);
   const nextStepId = detectNextStep(state.step, speech);
-  const nextStep = getStep(flow, nextStepId);
+  const nextStep = getSafeStep(flow, nextStepId);
   state.step = nextStepId;
 
   // Fallback → human
@@ -221,13 +236,17 @@ app.post("/start-call", async (req, res) => {
     return res.status(401).json({ error: "Unauthorized" });
   }
 
-  const call = await client.calls.create({
-    from: TWILIO_PHONE_NUMBER,
-    to: req.body.to,
-    url: `${BASE_URL}/twilio/voice`
-  });
+  try {
+    const call = await client.calls.create({
+      from: TWILIO_PHONE_NUMBER,
+      to: req.body.to,
+      url: `${BASE_URL}/twilio/voice`
+    });
 
-  res.json({ success: true, sid: call.sid });
+    res.json({ success: true, sid: call.sid });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 /* =====================
