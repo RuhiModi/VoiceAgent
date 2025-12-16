@@ -1,0 +1,39 @@
+{
+  "flow": [
+    {
+      "id": "intro",
+      "prompt": "Hello, I am calling from the e-office of MLA Kaushik Jain. May I take a moment of your time?",
+      "options": ["Yes", "No"]
+    },
+    {
+      "id": "task_check",
+      "prompt": "Has your work been completed during the scheme camp?",
+      "options": ["Completed", "Pending"]
+    },
+    {
+      "id": "task_done",
+      "prompt": "We are glad your work is completed. Thank you for your time.",
+      "options": []
+    },
+    {
+      "id": "task_pending",
+      "prompt": "We’re sorry your work is pending. Please describe the issue.",
+      "options": []
+    },
+    {
+      "id": "problem_recorded",
+      "prompt": "Thank you. Your issue has been recorded.",
+      "options": []
+    },
+    {
+      "id": "no_details",
+      "prompt": "No problem. You may contact us later. Thank you.",
+      "options": []
+    },
+    {
+      "id": "fallback",
+      "prompt": "Sorry, we’re facing a technical issue. We’ll call you again.",
+      "options": []
+    }
+  ]
+}
