@@ -31,8 +31,25 @@ const {
   RENDER_EXTERNAL_URL
 } = process.env;
 
+// 🔴 SAFETY: ensure base URL exists
+if (!RENDER_EXTERNAL_URL) {
+  console.error("❌ RENDER_EXTERNAL_URL is missing");
+  process.exit(1);
+}
+
 const BASE_URL = RENDER_EXTERNAL_URL.replace(/\/$/, "");
 const client = twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN);
+
+/* =====================
+   HEALTH CHECK (NEW)
+===================== */
+app.get("/health", (req, res) => {
+  res.status(200).json({
+    status: "ok",
+    service: "VoiceAgent",
+    time: new Date().toISOString()
+  });
+});
 
 /* =====================
    FLOW LOADER
@@ -58,6 +75,7 @@ function detectLanguage(text = "") {
   return "en";
 }
 
+// Gujarati → Hindi (male), Hindi → Hindi (male), English → English
 function getVoice(lang) {
   if (lang === "gu" || lang === "hi") {
     return { voice: "Polly.Amit", language: "hi-IN" };
@@ -117,7 +135,10 @@ function gatherSpeech(twiml, lang) {
 
 function transferToHuman(twiml) {
   if (!HUMAN_AGENT_NUMBER) {
-    twiml.say("All agents are busy. We will call you back.");
+    twiml.say(
+      { voice: "alice", language: "en-IN" },
+      "All agents are busy. We will call you back."
+    );
     twiml.hangup();
     return;
   }
@@ -126,6 +147,7 @@ function transferToHuman(twiml) {
     callerId: TWILIO_PHONE_NUMBER,
     answerOnBridge: true
   });
+
   dial.number(HUMAN_AGENT_NUMBER);
 }
 
@@ -136,9 +158,15 @@ app.post("/twilio/voice", (req, res) => {
   const twiml = new twilio.twiml.VoiceResponse();
   const callSid = req.body.CallSid;
 
-  callState.set(callSid, { step: "intro", lang: "gu", problem: "" });
+  callState.set(callSid, {
+    step: "intro",
+    lang: "gu",
+    problem: ""
+  });
 
   const flow = getFlow("gu");
+
+  // ✅ SPEAK FIRST (very important)
   sayPrompt(twiml, getStep(flow, "intro").prompt, "gu");
   gatherSpeech(twiml, "gu");
 
@@ -154,6 +182,12 @@ app.post("/twilio/gather", (req, res) => {
   const speech = req.body.SpeechResult || "";
 
   const state = callState.get(callSid);
+  if (!state) {
+    // safety fallback
+    transferToHuman(twiml);
+    return res.type("text/xml").send(twiml.toString());
+  }
+
   const lang = detectLanguage(speech);
   state.lang = lang;
 
@@ -162,6 +196,7 @@ app.post("/twilio/gather", (req, res) => {
   const nextStep = getStep(flow, nextStepId);
   state.step = nextStepId;
 
+  // Fallback → human
   if (nextStepId === "fallback") {
     transferToHuman(twiml);
     return res.type("text/xml").send(twiml.toString());
@@ -199,6 +234,6 @@ app.post("/start-call", async (req, res) => {
    SERVER START
 ===================== */
 const PORT = process.env.PORT || 10000;
-app.listen(PORT, () =>
-  console.log(`✅ Voice Agent running without application error on ${PORT}`)
-);
+app.listen(PORT, () => {
+  console.log(`✅ Voice Agent running without application error on ${PORT}`);
+});
