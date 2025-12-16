@@ -1,9 +1,9 @@
 import express from "express";
 import dotenv from "dotenv";
 import twilioPkg from "twilio";
+import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
-import flowData from "./voice-flow.json" assert { type: "json" };
 
 dotenv.config();
 const twilio = twilioPkg;
@@ -34,9 +34,21 @@ const {
 const client = twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN);
 
 /* =====================
-   IN-MEMORY CALL STATE
+   LOAD FLOW (SAFE)
 ===================== */
-const callState = new Map(); // CallSid → { step, problem }
+const FLOW_DIR = path.join(__dirname, "flows");
+
+function loadFlow(lang = "gu") {
+  const filePath = path.join(FLOW_DIR, `${lang}.json`);
+  return JSON.parse(fs.readFileSync(filePath, "utf8"));
+}
+
+const flowData = loadFlow("gu");
+
+/* =====================
+   CALL STATE MEMORY
+===================== */
+const callState = new Map();
 
 /* =====================
    HELPERS
@@ -72,8 +84,8 @@ function sayAndGather(twiml, text) {
     action: "/twilio/gather",
     method: "POST",
     speechTimeout: "auto",
-    language: "gu-IN",
-    bargeIn: true
+    bargeIn: true,
+    language: "gu-IN"
   });
 
   gather.say({ voice: "Polly.Aditi", language: "gu-IN" }, text);
@@ -85,7 +97,7 @@ function sayAndGather(twiml, text) {
 app.get("/health", (_, res) => res.json({ status: "ok" }));
 
 /* =====================
-   INBOUND / OUTBOUND ENTRY
+   CALL ENTRY
 ===================== */
 app.post("/twilio/voice", (req, res) => {
   const twiml = new twilio.twiml.VoiceResponse();
@@ -93,9 +105,7 @@ app.post("/twilio/voice", (req, res) => {
 
   callState.set(callSid, { step: "intro", problem: "" });
 
-  const step = getStep("intro");
-  sayAndGather(twiml, step.prompt);
-
+  sayAndGather(twiml, getStep("intro").prompt);
   res.type("text/xml").send(twiml.toString());
 });
 
@@ -113,7 +123,6 @@ app.post("/twilio/gather", async (req, res) => {
   const nextStepId = detectNextStep(state.step, speech);
   const nextStep = getStep(nextStepId);
 
-  // Save problem text
   if (state.step === "task_pending" && speech.length > 10) {
     state.problem = speech;
   }
@@ -121,9 +130,7 @@ app.post("/twilio/gather", async (req, res) => {
   state.step = nextStepId;
   callState.set(callSid, state);
 
-  /* =====================
-     GOOGLE SHEET LOG
-  ===================== */
+  /* LOG STRUCTURED DATA */
   if (LOG_WEBHOOK_URL) {
     fetch(LOG_WEBHOOK_URL, {
       method: "POST",
@@ -132,15 +139,13 @@ app.post("/twilio/gather", async (req, res) => {
         phone: from,
         step: nextStepId,
         speech,
-        problem: state.problem || "",
+        problem: state.problem,
         time: new Date().toISOString()
       })
     }).catch(() => {});
   }
 
-  /* =====================
-     HUMAN ESCALATION
-  ===================== */
+  /* HUMAN ESCALATION */
   if (/agent|human|officer|complaint/i.test(speech)) {
     const dial = twiml.dial({
       callerId: TWILIO_PHONE_NUMBER,
@@ -150,9 +155,6 @@ app.post("/twilio/gather", async (req, res) => {
     return res.type("text/xml").send(twiml.toString());
   }
 
-  /* =====================
-     FINAL OR CONTINUE
-  ===================== */
   if (!nextStep.options.length) {
     twiml.say({ voice: "Polly.Aditi", language: "gu-IN" }, nextStep.prompt);
     twiml.hangup();
@@ -171,12 +173,10 @@ app.post("/start-call", async (req, res) => {
     return res.status(401).json({ error: "Unauthorized" });
   }
 
-  const to = req.body.to;
-
   try {
     const call = await client.calls.create({
       from: TWILIO_PHONE_NUMBER,
-      to,
+      to: req.body.to,
       url: `${RENDER_EXTERNAL_URL}/twilio/voice`
     });
 
